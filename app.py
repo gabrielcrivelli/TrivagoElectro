@@ -16,7 +16,7 @@ app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="")
 CORS(app)
 
 # Cancelaciones por lote
-CANCEL_FLAGS = {}  # { run_id: True/False }
+CANCEL_FLAGS = {}
 
 DEFAULT_VENDORS = {
     "Carrefour": "https://www.carrefour.com.ar",
@@ -128,6 +128,7 @@ def scrape_vendor():
     name = to_str(v.get("name"))
     url  = to_str(v.get("url"))
     run_id = to_str(data.get("run_id"))
+
     if not products:
         return jsonify({"success": False, "error": "No se enviaron productos"}), 400
     if not name:
@@ -137,7 +138,6 @@ def scrape_vendor():
     min_delay = int(data.get("min_delay", 2))
     max_delay = int(data.get("max_delay", 5))
     include_official = bool(data.get("include_official", False))
-
     cancel_cb = (lambda: bool(CANCEL_FLAGS.get(run_id))) if run_id else (lambda: False)
 
     scraper = PriceScraper(headless=headless, delay_range=(min_delay, max_delay))
@@ -145,16 +145,11 @@ def scrape_vendor():
         products, {name: url}, include_official_site=include_official, return_logs=True, cancel_cb=cancel_cb
     )
 
-    ordered = [
-        "Producto","Marca","Carrefour","Cetrogar","CheekSA","Frávega","Libertad",
-        "Masonline","Megatone","Musimundo","Naldo","Vital","Marca (Sitio oficial)","Fecha de Consulta"
-    ]
-    for c in ordered:
-        if c not in df.columns:
-            df[c] = "ND"
-    # Mantener también columnas numéricas (terminan en " (num)")
-    extra = [c for c in df.columns if c.endswith(" (num)")]
-    df = df[ordered + extra]
+    base_cols = ["Producto","Marca","Marca (Sitio oficial)","Fecha de Consulta"]
+    vendor_cols = [c for c in df.columns if c == name or c == f"{name} (num)"]
+    keep = [c for c in base_cols + vendor_cols if c in df.columns]
+    df = df[keep]
+
     return jsonify({"success": True, "rows": df.to_dict(orient="records"), "log": logs})
 
 @app.route("/api/scrape", methods=["POST"])
@@ -181,6 +176,7 @@ def scrape():
 
     scraper = PriceScraper(headless=headless, delay_range=(min_delay, max_delay))
     df, logs = scraper.scrape_all_vendors(products, vendors, include_official_site=include_official, return_logs=True, cancel_cb=cancel_cb)
+
     ordered = [
         "Producto","Marca","Carrefour","Cetrogar","CheekSA","Frávega","Libertad",
         "Masonline","Megatone","Musimundo","Naldo","Vital","Marca (Sitio oficial)","Fecha de Consulta"

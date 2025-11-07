@@ -17,8 +17,7 @@
   </nav>
 
   <main>
-    <!-- INPUT (completo) -->
-    <section id="input" class="tab active" role="tabpanel" aria-labelledby="tab-0">
+    <section id="input" class="tab active">
       <h3>Importar productos</h3>
       <div class="import-wrap">
         <input id="fileInput" type="file" accept=".csv,.xlsx" />
@@ -60,8 +59,7 @@
       </table>
     </section>
 
-    <!-- BUSCAR -->
-    <section id="search" class="tab" role="tabpanel" aria-labelledby="tab-1">
+    <section id="search" class="tab">
       <h3>Parámetros</h3>
       <div class="grid">
         <label>Headless:
@@ -71,6 +69,9 @@
         <label>Delay máximo (s): <input id="maxDelay" type="number" value="5" min="1" max="10" /></label>
         <label>Incluir sitio oficial:
           <select id="official"><option value="false" selected>No</option><option value="true">Sí</option></select>
+        </label>
+        <label>Escritura inmediata:
+          <select id="immediate"><option value="true" selected>Sí</option><option value="false">No</option></select>
         </label>
       </div>
 
@@ -99,8 +100,7 @@
       </div>
     </section>
 
-    <!-- EXPORTAR -->
-    <section id="export" class="tab" role="tabpanel" aria-labelledby="tab-2">
+    <section id="export" class="tab">
       <h3>Exportar resultados</h3>
       <button id="toCSV">Exportar CSV</button>
       <button id="copyTable">Copiar tabla</button>

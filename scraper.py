@@ -1,3 +1,4 @@
+# scraper.py
 import re
 import io
 import time
@@ -11,7 +12,7 @@ from pdfminer.high_level import extract_text as pdf_extract_text
 import pandas as pd
 from urllib.parse import urlparse, parse_qs
 
-# ------------------ Utilidades generales ------------------
+# ============================ Utilidades ============================
 
 UA_POOL = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
@@ -19,7 +20,7 @@ UA_POOL = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
 ]
 
-# Selectores típicos de precio en tiendas
+# Selectores frecuentes de precio
 PRICE_CSS = [
     ".price",
     ".product-price",
@@ -31,74 +32,101 @@ PRICE_CSS = [
     "span[data-price]"
 ]
 
+# Contenedores de tarjeta de producto
+CARD_SELECTORS = [
+    ".product-item", "li.product", ".product", ".product-card", ".grid-item", ".product-box",
+    ".vtex-product-summary-2-x-container", ".ais-InfiniteHits-item"
+]
+
+# Posibles títulos/nombres de producto dentro de la tarjeta
+TITLE_SELECTORS = [
+    ".product-name", ".product-title", ".vtex-product-summary-2-x-productBrand", ".vtex-product-summary-2-x-productNameContainer",
+    "h1", "h2", "h3", "a[title]"
+]
+
 # Patrón monetario simple
 PRICE_PAT = re.compile(r"\$?\s*\d[\d\.\,]*")
 
-def s(x): 
+def s(x):
     return "" if x is None else str(x).strip()
 
-# Formatea texto de precio legible, ej: "$ 123.456,78"
-def format_price_display(value_float: float) -> str:
+def normalize_spaces(txt: str) -> str:
+    return re.sub(r"\s+", " ", txt or "").strip()
+
+def format_price_display_from_plain(plain: str) -> str:
+    """Recibe entero plano como string y devuelve texto tipo $ 123.456,00"""
     try:
-        out = f"$ {value_float:,.2f}"
-        # convertir a formato ES (coma decimal, punto miles)
+        val = int(plain)
+        out = f"$ {val:,.2f}"
         return out.replace(",", "_").replace(".", ",").replace("_", ".")
     except Exception:
         return ""
 
-# Convierte texto/valor a número plano sin puntos ni comas y SIN decimales
 def to_plain_int_str_from_text(text: str) -> Optional[str]:
     """
-    Intenta interpretar el texto como precio con separadores y decimales, 
-    lo convierte a float y devuelve su parte entera como string de dígitos.
-    Si no puede parsear, devuelve solo dígitos del texto.
+    Interpreta un texto de precio y devuelve la parte entera como string sin separadores/decimales.
+    Si no puede parsear, devuelve solo dígitos.
     """
     if not isinstance(text, str):
         return None
     raw = text.strip()
     if not raw:
         return None
-    # Normalización para float
     norm = re.sub(r"[^\d\.,]", "", raw)
     if not norm:
         return None
     try:
-        # casos con coma y punto
+        # , y . combinados
         if "," in norm and "." in norm:
-            # si la última coma está a la derecha del último punto, la coma es decimal y el punto es miles
             if norm.rfind(",") > norm.rfind("."):
                 norm = norm.replace(".", "").replace(",", ".")
             else:
-                # asume punto decimal
                 norm = norm.replace(",", "")
         elif "," in norm and "." not in norm:
-            # si hay coma, puede ser decimal o miles; asume coma decimal si dos dígitos a derecha
             parts = norm.split(",")
             if len(parts[-1]) <= 2:
                 norm = norm.replace(",", ".")
             else:
                 norm = norm.replace(",", "")
         elif "." in norm and "," not in norm:
-            # si hay muchos puntos, probablemente sean miles
             if len(norm.replace(".", "")) >= 5:
                 norm = norm.replace(".", "")
         val = float(norm)
-        ival = int(val)  # omitir decimales
-        return str(ival)
+        return str(int(val))
     except Exception:
-        # fallback: solo dígitos (podría incluir decimales pegados; se omiten por diseño aquí)
         digits = re.sub(r"[^\d]", "", raw)
-        if not digits:
-            return None
-        return digits
+        return digits or None
 
-def to_plain_int_str_from_float(value_float: float) -> str:
+def to_plain_from_float(v: float) -> str:
     try:
-        return str(int(float(value_float)))
+        return str(int(float(v)))
     except Exception:
         return ""
 
-# ------------------ Cliente HTTP endurecido (anti-403) ------------------
+def mk_variants_for_match(term: str) -> List[str]:
+    """
+    Genera variantes simples para comparación en texto:
+    - tal cual
+    - sin tildes ni símbolos
+    - colapsando espacios
+    """
+    base = normalize_spaces(term)
+    v = [base]
+    # remover símbolos comunes
+    v2 = re.sub(r"[^A-Za-z0-9 ÁÉÍÓÚÜÑáéíóúüñ\-_/\.]", " ", base)
+    v2 = normalize_spaces(v2)
+    if v2 and v2.lower() not in [x.lower() for x in v]:
+        v.append(v2)
+    return v
+
+def text_matches_any_variant(text: str, variants: List[str]) -> bool:
+    lt = normalize_spaces(text).lower()
+    for v in variants:
+        if all(tok in lt for tok in normalize_spaces(v).lower().split()):
+            return True
+    return False
+
+# ===================== Cliente HTTP (anti-403) ======================
 
 DEFAULT_HEADERS = {
     "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -143,14 +171,54 @@ class HttpClient:
         r.raise_for_status()
         return r
 
-# ------------------ Scraper principal ------------------
+# ============================ Scraper ===============================
 
 class PriceScraper:
     def __init__(self, headless: bool = True, delay_range: Tuple[int, int] = (2, 5)):
         self.client: Optional[HttpClient] = None
         self.delay_range = delay_range
 
-    # ---------- VTEX ----------
+    # ------------------- Verificación en tarjetas -------------------
+    def _extract_from_cards(self, soup: BeautifulSoup, term: str, log) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Devuelve (texto, entero_plano) si encuentra un precio dentro de una 'card'
+        cuyo contenido textual incluya el término (o variantes), evitando precios sueltos.
+        """
+        variants = mk_variants_for_match(term)
+        for cs in CARD_SELECTORS:
+            for card in soup.select(cs):
+                card_txt = card.get_text(" ", strip=True)
+                # Si el card no menciona el término, probar títulos internos
+                title_ok = text_matches_any_variant(card_txt, variants)
+                if not title_ok:
+                    for ts in TITLE_SELECTORS:
+                        t = card.select_one(ts)
+                        if t and text_matches_any_variant(t.get_text(" ", strip=True), variants):
+                            title_ok = True
+                            break
+                if not title_ok:
+                    continue
+                # Dentro del card, buscar precio por selectores
+                for pc in PRICE_CSS:
+                    el = card.select_one(pc)
+                    if el:
+                        txt = el.get_text(" ", strip=True)
+                        pnum = to_plain_int_str_from_text(txt)
+                        if pnum:
+                            ptxt = format_price_display_from_plain(pnum)
+                            log(f"Card {cs} {pc} -> {ptxt} ({pnum})")
+                            return ptxt, pnum
+                # Si no hay selectores, patrón local en el card
+                m = PRICE_PAT.search(card_txt)
+                if m:
+                    pnum = to_plain_int_str_from_text(m.group(0))
+                    if pnum:
+                        ptxt = format_price_display_from_plain(pnum)
+                        log(f"Card {cs} patrón -> {ptxt} ({pnum})")
+                        return ptxt, pnum
+        return None, None
+
+    # ------------------------ VTEX (API) ----------------------------
     def _try_vtex(self, base: str, term: str, log) -> Tuple[Optional[str], Optional[str]]:
         api = f"{base.rstrip('/')}/api/catalog_system/pub/products/search"
         r = self.client.get(api, params={"_from": 0, "_to": 9, "ft": term})
@@ -169,48 +237,42 @@ class PriceScraper:
                     offer = sel.get("commertialOffer") or {}
                     price = offer.get("Price")
                     if price is not None:
-                        ptxt = format_price_display(float(price))
-                        pnum = to_plain_int_str_from_float(float(price))
+                        pnum = to_plain_from_float(float(price))
+                        ptxt = format_price_display_from_plain(pnum)
                         log(f"VTEX: precio={price}")
                         return ptxt, pnum
-        # priceRange como alternativa
+        # priceRange lowPrice
         for prod in data:
             pr = (prod.get("priceRange") or {}).get("sellingPrice", {})
             low = pr.get("lowPrice")
             if low is not None:
-                ptxt = format_price_display(float(low))
-                pnum = to_plain_int_str_from_float(float(low))
+                pnum = to_plain_from_float(float(low))
+                ptxt = format_price_display_from_plain(pnum)
                 log(f"VTEX: lowPrice={low}")
                 return ptxt, pnum
         return None, None
 
-    # ---------- Magento ----------
+    # --------------------- Magento (HTML) ---------------------------
     def _try_magento_html(self, base: str, term: str, log) -> Tuple[Optional[str], Optional[str]]:
         url = f"{base.rstrip('/')}/catalogsearch/result/"
         r = self.client.get(url, params={"q": term})
         soup = BeautifulSoup(r.text, "html.parser")
-        # Intentar por selectores
-        for css in PRICE_CSS:
-            el = soup.select_one(css)
-            if el:
-                txt = el.get_text(" ", strip=True)
-                ptxt = format_price_display(float(to_plain_int_str_from_text(txt) or "0"))
-                pnum = to_plain_int_str_from_text(txt)
-                if pnum:
-                    log(f"Magento: {css} -> {ptxt} ({pnum})")
-                    return ptxt, pnum
-        # Búsqueda global
+        # Prioridad: tarjetas
+        ptxt, pnum = self._extract_from_cards(soup, term, log)
+        if ptxt and pnum:
+            log(f"Magento verificado -> {ptxt} ({pnum})")
+            return ptxt, pnum
+        # Último recurso: patrón global en toda la página (evita falsos positivos si no hay cards)
         m = PRICE_PAT.search(soup.get_text(" ", strip=True))
         if m:
-            txt = m.group(0)
-            ptxt = format_price_display(float(to_plain_int_str_from_text(txt) or "0"))
-            pnum = to_plain_int_str_from_text(txt)
+            pnum = to_plain_int_str_from_text(m.group(0))
             if pnum:
-                log(f"Magento: patrón global -> {ptxt} ({pnum})")
+                ptxt = format_price_display_from_plain(pnum)
+                log(f"Magento patrón global -> {ptxt} ({pnum})")
                 return ptxt, pnum
         return None, None
 
-    # ---------- WordPress/WooCommerce ----------
+    # ----------------- WordPress / WooCommerce ---------------------
     def _find_wp_search(self, html: str, base: str) -> Optional[str]:
         soup = BeautifulSoup(html, "html.parser")
         form = soup.find("form", attrs={"role": "search"}) or soup.find("form", class_=re.compile("search", re.I))
@@ -220,36 +282,31 @@ class PriceScraper:
         return action
 
     def _try_wordpress(self, base: str, term: str, log) -> Tuple[Optional[str], Optional[str]]:
-        # 1) Detectar formulario
+        # 1) detectar formulario
         r = self.client.get(base.rstrip("/") + "/")
         action = self._find_wp_search(r.text, base) or base.rstrip("/") + "/"
-        # 2) Probar ?s=term y ?s=term&post_type=product
+        # 2) s y s+post_type=product
         for params in ({"s": term}, {"s": term, "post_type": "product"}):
             try:
                 rr = self.client.get(action, params=params)
                 soup = BeautifulSoup(rr.text, "html.parser")
-                el = soup.select_one(".woocommerce-Price-amount.amount") or soup.select_one("[class*='woocommerce-Price-amount']")
-                if el:
-                    txt = el.get_text(" ", strip=True)
-                    pnum = to_plain_int_str_from_text(txt)
-                    if pnum:
-                        ptxt = format_price_display(float(pnum))
-                        log(f"WordPress/Woo: {action} {params} -> {ptxt} ({pnum})")
-                        return ptxt, pnum
-                # fallback global
+                ptxt, pnum = self._extract_from_cards(soup, term, log)
+                if ptxt and pnum:
+                    log(f"WordPress/Woo verificado -> {ptxt} ({pnum})")
+                    return ptxt, pnum
+                # último recurso: patrón global
                 m = PRICE_PAT.search(soup.get_text(" ", strip=True))
                 if m:
-                    txt = m.group(0)
-                    pnum = to_plain_int_str_from_text(txt)
+                    pnum = to_plain_int_str_from_text(m.group(0))
                     if pnum:
-                        ptxt = format_price_display(float(pnum))
-                        log(f"WordPress: patrón -> {ptxt} ({pnum})")
+                        ptxt = format_price_display_from_plain(pnum)
+                        log(f"WordPress patrón global -> {ptxt} ({pnum})")
                         return ptxt, pnum
             except Exception as e:
                 log(f"WordPress error {action} {params}: {e}")
         return None, None
 
-    # ---------- Genérico ----------
+    # ------------------------- Genérico ----------------------------
     def _try_generic(self, base: str, term: str, log) -> Tuple[Optional[str], Optional[str]]:
         for path in ["/search", "/buscar", "/busca", "/s", "/busqueda"]:
             url = f"{base.rstrip('/')}{path}"
@@ -259,27 +316,20 @@ class PriceScraper:
                 log(f"Genérico: error {path}: {e}")
                 continue
             soup = BeautifulSoup(r.text, "html.parser")
-            txt_all = soup.get_text(" ", strip=True)
-            for css in PRICE_CSS:
-                el = soup.select_one(css)
-                if el:
-                    txt = el.get_text(" ", strip=True)
-                    pnum = to_plain_int_str_from_text(txt)
-                    if pnum:
-                        ptxt = format_price_display(float(pnum))
-                        log(f"Genérico: {path} {css} -> {ptxt} ({pnum})")
-                        return ptxt, pnum
-            m = PRICE_PAT.search(txt_all)
+            ptxt, pnum = self._extract_from_cards(soup, term, log)
+            if ptxt and pnum:
+                log(f"Genérico verificado {path} -> {ptxt} ({pnum})")
+                return ptxt, pnum
+            m = PRICE_PAT.search(soup.get_text(" ", strip=True))
             if m:
-                txt = m.group(0)
-                pnum = to_plain_int_str_from_text(txt)
+                pnum = to_plain_int_str_from_text(m.group(0))
                 if pnum:
-                    ptxt = format_price_display(float(pnum))
-                    log(f"Genérico: {path} patrón -> {ptxt} ({pnum})")
+                    ptxt = format_price_display_from_plain(pnum)
+                    log(f"Genérico patrón {path} -> {ptxt} ({pnum})")
                     return ptxt, pnum
         return None, None
 
-    # ---------- Folletos / PDF ----------
+    # --------------------- Folletos / PDF --------------------------
     def _pdf_text_from_url(self, url: str, log) -> str:
         r = self.client.get(url, timeout=45)
         content = r.content
@@ -308,7 +358,6 @@ class PriceScraper:
             try:
                 r = self.client.get(u)
                 soup = BeautifulSoup(r.text, "html.parser")
-                # anchors
                 for a in soup.find_all("a", href=True):
                     href = a["href"]
                     if "wa.me/?" in href:
@@ -318,26 +367,34 @@ class PriceScraper:
                     elif href.lower().endswith(".pdf"):
                         full = href if href.startswith("http") else (base.rstrip("/") + "/" + href.lstrip("/"))
                         links.append(full)
-                # iframes (visores)
                 for iframe in soup.find_all("iframe", src=True):
                     src = iframe["src"]
                     if src.lower().endswith(".pdf"):
                         links.append(src)
             except Exception as e:
                 log(f"Folleto error {u}: {e}")
-        # Descargar y buscar término
-        for purl in links[:10]:
+        # Descargar y verificar proximidad (término cerca del precio)
+        term_l = term.lower()
+        for purl in links[:12]:
             txt = self._pdf_text_from_url(purl, log)
-            if term.lower() in txt.lower():
-                for pr in PRICE_PAT.findall(txt):
-                    pnum = to_plain_int_str_from_text(pr)
+            if not txt:
+                continue
+            txt_l = txt.lower()
+            if term_l not in txt_l:
+                continue
+            # buscar precio cercano al término (±200 caracteres)
+            for m in PRICE_PAT.finditer(txt):
+                pos = m.start()
+                window = txt_l[max(0, pos-200): pos+200]
+                if term_l in window:
+                    pnum = to_plain_int_str_from_text(m.group(0))
                     if pnum:
-                        ptxt = format_price_display(float(pnum))
-                        log(f"Folleto PDF hit {purl} -> {ptxt} ({pnum})")
+                        ptxt = format_price_display_from_plain(pnum)
+                        log(f"Folleto verificado {purl} -> {ptxt} ({pnum})")
                         return ptxt, pnum
         return None, None
 
-    # ---------- Selección de estrategia ----------
+    # ----------------- Orden de estrategias por vendor --------------
     def _detect_platform_order(self, vendor_name: str, domain: str) -> List[str]:
         vn = (vendor_name or "").lower()
         if vn in ["cheeksa", "megatone"]:
@@ -374,7 +431,7 @@ class PriceScraper:
                 log(f"Error {e}")
         return None, None
 
-    # ---------- Variantes de búsqueda ----------
+    # ---------------- Variantes de términos por producto ------------
     def _variants(self, p: Dict) -> List[str]:
         marca = s(p.get("marca"))
         modelo = s(p.get("modelo"))
@@ -389,11 +446,12 @@ class PriceScraper:
         if marca and capacidad: vs.append(f"{marca} {capacidad}")
         out, seen = [], set()
         for v in vs:
-            if v and v not in seen:
-                out.append(v); seen.add(v)
+            v2 = normalize_spaces(v)
+            if v2 and v2 not in seen:
+                out.append(v2); seen.add(v2)
         return out[:8]
 
-    # ---------- Orquestación ----------
+    # ------------------------- Orquestación -------------------------
     def scrape_all_vendors(self, products: List[Dict], vendors: Dict[str, str], include_official_site: bool = False, return_logs: bool = False, cancel_cb: Optional[Callable[[], bool]] = None):
         logs: List[str] = []
         def log(msg: str):
@@ -421,7 +479,7 @@ class PriceScraper:
                     if price_txt and price_num:
                         break
                 row[vn] = price_txt or "ND"
-                row[f"{vn} (num)"] = price_num or ""  # num plano sin decimales
+                row[f"{vn} (num)"] = price_num or ""  # entero plano sin separadores/decimales
             rows.append(row)
 
         df = pd.DataFrame(rows)

@@ -1,7 +1,7 @@
 const API_BASE = window.API_BASE || "";
 const MAX_PER_BATCH = 5;
 
-/* Tabs accesibles (WAI-ARIA) */
+/* Tabs accesibles */
 const tabs = document.querySelectorAll(".tabs button");
 const tablist = document.querySelector(".tabs");
 if (tablist) tablist.setAttribute("role", "tablist");
@@ -35,12 +35,24 @@ function activateTab(btn){
   if (panel){ panel.classList.add("active"); panel.hidden = false; }
 }
 
-/* UI refs */
+/* Refs UI */
 const productsBody = document.querySelector("#productsTable tbody");
 const vendorsBody  = document.querySelector("#vendorsTable tbody");
 const statusDiv    = document.getElementById("status");
-const resultsBody  = document.querySelector("#resultsTable tbody");
+const resultsTable = document.getElementById("resultsTable");
+const resultsBody  = resultsTable.querySelector("tbody");
 const runLog       = document.getElementById("runLog");
+
+/* Columnas por vendedor (header -> índice) */
+function headerIndexMap(){
+  const map = {};
+  const ths = resultsTable.tHead.rows[0].cells;
+  for (let i=0;i<ths.length;i++){
+    const name = ths[i].textContent.trim();
+    map[name] = i;
+  }
+  return map;
+}
 
 /* Botones y acciones */
 document.getElementById("addProduct").onclick = () => addProductRow();
@@ -86,7 +98,7 @@ async function loadVendorsFromAPI() {
   Object.keys(vendors).forEach(name => addVendorRow({ name, url: vendors[name] }));
 }
 
-/* Importación CSV/XLSX y pegado */
+/* Importación CSV/XLSX/pegado */
 const fileInput = document.getElementById("fileInput");
 const parseBtn  = document.getElementById("parseFile");
 const openPaste = document.getElementById("openPaste");
@@ -198,28 +210,66 @@ let abortRun = false;
 let currentRunId = null;
 
 function keyOf(r){ return [r["Producto"]||"", r["Marca"]||""].join("||"); }
+
+/* Merge por patch que no pisa ND */
 function mergeRows(incoming){
   const map = new Map(resultsStore.map(r => [keyOf(r), r]));
+  const isBase = k => k === "Producto" || k === "Marca" || k === "Fecha de Consulta" || k === "Marca (Sitio oficial)";
+  const hasValue = v => {
+    if (v === null || v === undefined) return false;
+    const s = String(v).trim();
+    return s !== "" && s.toUpperCase() !== "ND";
+  };
+
   for (const row of incoming){
     const k = keyOf(row);
-    if (map.has(k)) Object.assign(map.get(k), row);
-    else map.set(k, row);
+    if (!map.has(k)) map.set(k, { ...row });
+    else {
+      const dest = map.get(k);
+      for (const [kk, vv] of Object.entries(row)){
+        if (isBase(kk)) { dest[kk] = vv; continue; }
+        if (hasValue(vv)) dest[kk] = vv;
+      }
+    }
   }
+
   resultsStore = [...map.values()];
-  const tbody = document.querySelector("#resultsTable tbody");
-  tbody.innerHTML = "";
-  for (const r of resultsStore){
-    const td = (k) => `<td>${(r[k] ?? "ND") || "ND"}</td>`;
-    const tr = `
-      <tr>
-        ${td("Producto")}${td("Marca")}${td("Carrefour")}${td("Cetrogar")}${td("CheekSA")}
-        ${td("Frávega")}${td("Libertad")}${td("Masonline")}${td("Megatone")}
-        ${td("Musimundo")}${td("Naldo")}${td("Vital")}${td("Marca (Sitio oficial)")}
-        ${td("Fecha de Consulta")}
-      </tr>`;
-    tbody.insertAdjacentHTML("beforeend", tr);
-  }
 }
+
+/* Escritura inmediata: crear fila si no existe y actualizar solo la celda del vendedor */
+function ensureRowAndSetCell(rowObj, vendorName){
+  const headMap = headerIndexMap();
+  const idx = headMap[vendorName];
+  if (idx == null) return;
+
+  const k = keyOf(rowObj);
+  let tr = resultsBody.querySelector(`tr[data-key="${CSS && CSS.escape ? CSS.escape(k) : k}"]`);
+
+  if (!tr){
+    tr = document.createElement("tr");
+    tr.dataset.key = k;
+
+    // construir celdas base + todas las columnas visibles como ND
+    const headers = [...resultsTable.tHead.rows[0].cells].map(x => x.textContent.trim());
+    for (const h of headers){
+      const td = document.createElement("td");
+      if (h === "Producto") td.textContent = rowObj["Producto"] || "";
+      else if (h === "Marca") td.textContent = rowObj["Marca"] || "";
+      else if (h === "Fecha de Consulta") td.textContent = rowObj["Fecha de Consulta"] || "";
+      else if (h === "Marca (Sitio oficial)") td.textContent = rowObj["Marca (Sitio oficial)"] || "ND";
+      else td.textContent = "ND";
+      tr.appendChild(td);
+    }
+    resultsBody.appendChild(tr);
+  }
+
+  // actualizar solo la celda del vendedor
+  const tds = tr.children;
+  const value = rowObj[vendorName] ?? "ND";
+  tds[idx].textContent = value && String(value).trim() !== "" ? value : "ND";
+}
+
+/* Log y helpers UI */
 function logLine(text, cls=""){
   const ts = new Date().toLocaleTimeString();
   const div = document.createElement("div");
@@ -233,7 +283,7 @@ function timeGreeting(nombre = "Alberto"){
   if (h >= 6 && h < 12) return `Buen día ${nombre}`;
   if (h >= 12 && h < 20) return `Buenas tardes ${nombre}`;
   return `Buenas noches ${nombre}`;
-} // Date.getHours devuelve 0..23 en hora local [MDN]
+}
 
 function newRunId(){ return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 async function stopSearch(){
@@ -252,6 +302,7 @@ async function stopSearch(){
   }
 }
 
+/* Ejecución incremental por vendedor */
 async function runSearch(){
   const allProducts = collectProducts();
   const allVendors  = collectVendors();
@@ -269,6 +320,8 @@ async function runSearch(){
 
   logLine(timeGreeting("Alberto"), "ok");
   logLine(`Lote de ${products.length} producto(s), ${Object.keys(allVendors).length} vendedor(es). run_id=${currentRunId}`, "warn");
+
+  const immediate = document.getElementById("immediate").value === "true";
 
   for (const [name, url] of Object.entries(allVendors)){
     if (abortRun){ logLine("Ejecución detenida por el usuario.", "err"); break; }
@@ -290,8 +343,31 @@ async function runSearch(){
         body: JSON.stringify(payload)
       });
       if (!data.success) throw new Error(data.error || `Falló ${name}`);
-      (data.log || []).forEach(line => logLine(line));
+
+      // Escritura inmediata: actualizar celda del vendedor
+      if (immediate){
+        (data.rows || []).forEach(r => ensureRowAndSetCell(r, name));
+      }
+
+      // Merge en memoria (patch) y repintado (si immediate==false)
       mergeRows(data.rows || []);
+      if (!immediate){
+        // repintado conservando datos
+        const tbody = resultsBody; tbody.innerHTML = "";
+        for (const r of resultsStore){
+          const td = (k) => `<td>${(r[k] ?? "ND") || "ND"}</td>`;
+          const tr = `
+            <tr data-key="${keyOf(r)}">
+              ${td("Producto")}${td("Marca")}${td("Carrefour")}${td("Cetrogar")}${td("CheekSA")}
+              ${td("Frávega")}${td("Libertad")}${td("Masonline")}${td("Megatone")}
+              ${td("Musimundo")}${td("Naldo")}${td("Vital")}${td("Marca (Sitio oficial)")}
+              ${td("Fecha de Consulta")}
+            </tr>`;
+          tbody.insertAdjacentHTML("beforeend", tr);
+        }
+      }
+
+      (data.log || []).forEach(line => logLine(line));
       logLine(`OK ${name}`, "ok");
     }catch(e){
       logLine(`ERROR ${name}: ${e.message}`, "err");
