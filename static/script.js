@@ -35,7 +35,7 @@ function activateTab(btn){
   if (panel){ panel.classList.add("active"); panel.hidden = false; }
 }
 
-/* Refs UI */
+/* UI refs */
 const productsBody = document.querySelector("#productsTable tbody");
 const vendorsBody  = document.querySelector("#vendorsTable tbody");
 const statusDiv    = document.getElementById("status");
@@ -78,7 +78,7 @@ function addVendorRow(v = { name: "", url: "" }) {
   vendorsBody.appendChild(tr);
 }
 
-/* Precarga vendedores desde backend */
+/* Precarga vendedores */
 async function loadVendorsFromAPI() {
   const data = await safeJsonFetch(`${API_BASE}/api/vendors`);
   vendorsBody.innerHTML = "";
@@ -157,7 +157,7 @@ function parseClipboardTable(text) {
   return rows.map(r => r.split("\t").map(c => c.trim()));
 }
 
-/* Normalización y helpers */
+/* Normalización */
 const toS = v => (v == null ? "" : String(v).trim());
 function normalizeRows(rows) {
   if (!rows || !rows.length) return [];
@@ -192,7 +192,7 @@ function normalizeRows(rows) {
 }
 function appendProducts(arr){ if (!arr||!arr.length) return; for (const p of arr) addProductRow(p); }
 
-/* Estado y resultados */
+/* Estado, saludo y ejecución */
 let resultsStore = [];
 let abortRun = false;
 let currentRunId = null;
@@ -220,8 +220,6 @@ function mergeRows(incoming){
     tbody.insertAdjacentHTML("beforeend", tr);
   }
 }
-
-/* Log */
 function logLine(text, cls=""){
   const ts = new Date().toLocaleTimeString();
   const div = document.createElement("div");
@@ -230,20 +228,14 @@ function logLine(text, cls=""){
   runLog.scrollTop = runLog.scrollHeight;
 }
 function setStatus(msg){ statusDiv.textContent = msg; }
-
-/* Saludo contextual por hora local */
 function timeGreeting(nombre = "Alberto"){
-  const h = new Date().getHours(); // 0..23 en hora local [MDN getHours]
-  // rangos simples: 6–11 mañana, 12–19 tarde, 20–5 noche
+  const h = new Date().getHours();
   if (h >= 6 && h < 12) return `Buen día ${nombre}`;
   if (h >= 12 && h < 20) return `Buenas tardes ${nombre}`;
   return `Buenas noches ${nombre}`;
-} // usa Date.getHours() para decidir el saludo [web:377][web:379]
+} // Date.getHours devuelve 0..23 en hora local [MDN]
 
-/* Cancelación */
-function newRunId(){
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
+function newRunId(){ return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 async function stopSearch(){
   abortRun = true;
   logLine("Solicitud de cancelación enviada…", "warn");
@@ -260,7 +252,6 @@ async function stopSearch(){
   }
 }
 
-/* Ejecución incremental por vendedor */
 async function runSearch(){
   const allProducts = collectProducts();
   const allVendors  = collectVendors();
@@ -276,8 +267,7 @@ async function runSearch(){
   abortRun = false;
   currentRunId = newRunId();
 
-  // NUEVO: saludo contextual
-  logLine(timeGreeting("Alberto"), "ok"); // primera línea del lote [web:377][web:379]
+  logLine(timeGreeting("Alberto"), "ok");
   logLine(`Lote de ${products.length} producto(s), ${Object.keys(allVendors).length} vendedor(es). run_id=${currentRunId}`, "warn");
 
   for (const [name, url] of Object.entries(allVendors)){
@@ -300,7 +290,7 @@ async function runSearch(){
         body: JSON.stringify(payload)
       });
       if (!data.success) throw new Error(data.error || `Falló ${name}`);
-      (data.log || []).forEach(line => logLine(line)); // log exhaustivo por URL/estrategia
+      (data.log || []).forEach(line => logLine(line));
       mergeRows(data.rows || []);
       logLine(`OK ${name}`, "ok");
     }catch(e){
@@ -354,7 +344,7 @@ function copyTable(){
   document.execCommand("copy"); sel.removeAllRanges(); alert("Tabla copiada al portapapeles");
 }
 
-/* Colección de UI */
+/* Colectores */
 function collectProducts() {
   const rows = [...productsBody.querySelectorAll("tr")];
   return rows.map(r => {
@@ -372,5 +362,5 @@ function collectVendors() {
   return map;
 }
 
-/* Parsers auxiliares */
-function parseCSV_lineAware(text){ return parseCSV(text); } // placeholder si luego se requieree
+/* Inicio */
+loadVendorsFromAPI();
