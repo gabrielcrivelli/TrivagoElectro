@@ -1,16 +1,15 @@
-/* Configuración de API: si frontend y backend están en dominios distintos,
-   define window.API_BASE en index.html, p.ej.:
+/* Configuración de API:
+   Si frontend y backend están en dominios distintos, define window.API_BASE en index.html:
    <script>window.API_BASE="https://tu-api.onrender.com";</script>
 */
 const API_BASE = window.API_BASE || "";
 
-/* ----------- Tabs (sin pestaña Deploy) ----------- */
+/* ---------------- Tabs accesibles (sin Deploy) ---------------- */
 const tabs = document.querySelectorAll(".tabs button");
 const sections = document.querySelectorAll(".tab");
-
-/* Roles ARIA básicos para tabs */
 const tablist = document.querySelector(".tabs");
-if (tablist) tablist.setAttribute("role", "tablist");
+if (tablist) tablist.setAttribute("role", "tablist"); // [A11Y]
+
 tabs.forEach((btn, i) => {
   btn.setAttribute("role", "tab");
   btn.setAttribute("tabindex", btn.classList.contains("active") ? "0" : "-1");
@@ -53,13 +52,13 @@ function activateTab(btn) {
   if (panel) { panel.classList.add("active"); panel.hidden = false; }
 }
 
-/* ----------- Elementos de la UI ----------- */
+/* ---------------- Elementos de la UI ---------------- */
 const productsBody = document.querySelector("#productsTable tbody");
 const vendorsBody  = document.querySelector("#vendorsTable tbody");
 const statusDiv    = document.getElementById("status");
 const resultsBody  = document.querySelector("#resultsTable tbody");
 
-/* Botón CTA: renombrar y estilo */
+/* CTA: INICIAR BÚSQUEDA */
 const startBtn = document.getElementById("start");
 if (startBtn) {
   startBtn.textContent = "INICIAR BÚSQUEDA";
@@ -71,12 +70,7 @@ document.getElementById("addProduct").onclick = () => addProductRow();
 const addVendorBtn = document.getElementById("addVendor");
 if (addVendorBtn) addVendorBtn.onclick  = () => addVendorRow({ name: "", url: "" });
 
-/* Si dejaste el botón de cargar vendedores para admins, puedes volver a habilitarlo:
-const loadBtn = document.getElementById("loadVendors");
-if (loadBtn) loadBtn.onclick = loadVendorsFromAPI;
-*/
-
-/* Muestras de productos (opcional) */
+/* Botón (opcional) de muestras */
 const loadSamplesBtn = document.getElementById("loadSamples");
 if (loadSamplesBtn) {
   loadSamplesBtn.onclick = () => {
@@ -95,15 +89,15 @@ document.getElementById("toCSV").onclick        = exportCSV;
 document.getElementById("copyTable").onclick    = copyTable;
 document.getElementById("toSheets").onclick     = exportToSheets;
 
-/* ----------- Constructores de filas ----------- */
+/* ---------------- Filas dinámicas ---------------- */
 function addProductRow(p = {}) {
   const tr = document.createElement("tr");
   tr.innerHTML = `
-    <td><input type="text" value="${p.producto || ""}" placeholder="Nombre completo" /></td>
-    <td><input type="text" value="${p.marca || ""}" placeholder="Marca" /></td>
-    <td><input type="text" value="${p.modelo || ""}" placeholder="Modelo" /></td>
-    <td><input type="text" value="${p.capacidad || ""}" placeholder="Capacidad" /></td>
-    <td><input type="text" value="${p.ean || ""}" placeholder="EAN/Código" /></td>
+    <td><input type="text" value="${(p.producto||"")}" placeholder="Nombre completo" /></td>
+    <td><input type="text" value="${(p.marca||"")}" placeholder="Marca" /></td>
+    <td><input type="text" value="${(p.modelo||"")}" placeholder="Modelo" /></td>
+    <td><input type="text" value="${(p.capacidad||"")}" placeholder="Capacidad" /></td>
+    <td><input type="text" value="${(p.ean||"")}" placeholder="EAN/Código" /></td>
     <td><button class="secondary">Eliminar</button></td>
   `;
   tr.querySelector("button").onclick = () => tr.remove();
@@ -113,15 +107,15 @@ function addProductRow(p = {}) {
 function addVendorRow(v = { name: "", url: "" }) {
   const tr = document.createElement("tr");
   tr.innerHTML = `
-    <td><input type="text" value="${v.name || ""}" placeholder="Nombre" /></td>
-    <td><input type="text" value="${v.url || ""}" placeholder="https://..." /></td>
+    <td><input type="text" value="${(v.name||"")}" placeholder="Nombre" /></td>
+    <td><input type="text" value="${(v.url||"")}" placeholder="https://..." /></td>
     <td><button class="secondary">Eliminar</button></td>
   `;
   tr.querySelector("button").onclick = () => tr.remove();
   vendorsBody.appendChild(tr);
 }
 
-/* ----------- (Opcional) Cargar vendedores desde backend ----------- */
+/* ---------------- Precarga de vendedores ---------------- */
 async function loadVendorsFromAPI() {
   const data = await safeJsonFetch(`${API_BASE}/api/vendors`);
   vendorsBody.innerHTML = "";
@@ -129,11 +123,11 @@ async function loadVendorsFromAPI() {
   Object.keys(vendors).forEach(name => addVendorRow({ name, url: vendors[name] }));
 }
 
-/* ----------- Utilidades de recolección ----------- */
+/* ---------------- Utilidades de recolección ---------------- */
 function collectProducts() {
   const rows = [...productsBody.querySelectorAll("tr")];
   return rows.map(r => {
-    const [producto, marca, modelo, capacidad, ean] = [...r.querySelectorAll("input")].map(i => i.value.trim());
+    const [producto, marca, modelo, capacidad, ean] = [...r.querySelectorAll("input")].map(i => (i.value||"").trim());
     return { producto, marca, modelo, capacidad, ean };
   }).filter(p => p.producto || p.modelo);
 }
@@ -142,7 +136,7 @@ function collectVendors() {
   const rows = [...vendorsBody.querySelectorAll("tr")];
   const map = {};
   rows.forEach(r => {
-    const [name, url] = [...r.querySelectorAll("input")].map(i => i.value.trim());
+    const [name, url] = [...r.querySelectorAll("input")].map(i => (i.value||"").trim());
     if (name) map[name] = url || "";
   });
   return map;
@@ -150,12 +144,11 @@ function collectVendors() {
 
 function setStatus(msg) { statusDiv.textContent = msg; }
 
-/* ----------- Búsqueda (antes “scraping”) ----------- */
+/* ---------------- Ejecución de búsqueda ---------------- */
 async function runSearch() {
   const products = collectProducts();
   const vendors  = collectVendors();
   if (!products.length) { alert("Agrega al menos un producto"); return; }
-  // Si deseas que arranque vacío, no cargues vendedores automáticamente.
   setStatus("Ejecutando búsqueda...");
 
   const payload = {
@@ -183,22 +176,22 @@ async function runSearch() {
   }
 }
 
-/* ----------- Fetch robusto ----------- */
+/* ---------------- Fetch robusto ---------------- */
 async function safeJsonFetch(url, options = {}) {
   const res = await fetch(url, options);
   const ct = res.headers.get("content-type") || "";
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`HTTP ${res.status} ${res.statusText}: ${body.slice(0, 200)}`);
+    throw new Error(`HTTP ${res.status} : ${body.slice(0, 300)}`);
   }
   if (!ct.includes("application/json")) {
-    const body = await res.text();
-    throw new Error(`Respuesta no-JSON desde ${url}: ${body.slice(0, 200)}`);
+    const text = await res.text();
+    throw new Error(`Respuesta no-JSON desde ${url}: ${text.slice(0, 300)}`);
   }
   return res.json();
 }
 
-/* ----------- Render de resultados ----------- */
+/* ---------------- Render de resultados ---------------- */
 function renderResults(rows) {
   resultsBody.innerHTML = "";
   for (const r of rows) {
@@ -214,7 +207,7 @@ function renderResults(rows) {
   }
 }
 
-/* ----------- Exportar ----------- */
+/* ---------------- Exportar ---------------- */
 function exportCSV() {
   const table = document.getElementById("resultsTable");
   const rows = [...table.querySelectorAll("tr")].map(tr => [...tr.children].map(td => {
@@ -256,5 +249,5 @@ function copyTable() {
   alert("Tabla copiada al portapapeles");
 }
 
-/* Inicialización: NO cargar vendedores automáticamente para mantener solo “Agregar vendedor” */
-// (intencionalmente vacío)
+/* ---------------- Inicialización ---------------- */
+loadVendorsFromAPI(); // Precarga vendedores desde VENDEDORES.txt/prompt/defaults [MDN Fetch]
