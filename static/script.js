@@ -2,7 +2,7 @@
 const API_BASE = window.API_BASE || "";
 const MAX_PER_BATCH = 5;
 
-/* Tabs accesibles (WAI-ARIA) */
+/* Tabs accesibles */
 const tabs = document.querySelectorAll(".tabs button");
 const tablist = document.querySelector(".tabs");
 if (tablist) tablist.setAttribute("role", "tablist");
@@ -36,7 +36,7 @@ function activateTab(btn){
   if (panel){ panel.classList.add("active"); panel.hidden = false; }
 }
 
-/* Refs UI */
+/* Refs */
 const productsBody = document.querySelector("#productsTable tbody");
 const vendorsBody  = document.querySelector("#vendorsTable tbody");
 const statusDiv    = document.getElementById("status");
@@ -44,7 +44,7 @@ const resultsTable = document.getElementById("resultsTable");
 const resultsBody  = resultsTable.querySelector("tbody");
 const runLog       = document.getElementById("runLog");
 
-/* Mapear índice de columna por encabezado */
+/* Índices de columnas por header */
 function headerIndexMap(){
   const map = {};
   const ths = resultsTable.tHead.rows[0].cells;
@@ -55,7 +55,7 @@ function headerIndexMap(){
   return map;
 }
 
-/* Botones y acciones */
+/* Botones */
 document.getElementById("addProduct").onclick = () => addProductRow();
 const addVendorBtn = document.getElementById("addVendor");
 if (addVendorBtn) addVendorBtn.onclick  = () => addVendorRow({ name: "", url: "" });
@@ -91,7 +91,7 @@ function addVendorRow(v = { name: "", url: "" }) {
   vendorsBody.appendChild(tr);
 }
 
-/* Precarga vendedores */
+/* Precarga vendors */
 async function loadVendorsFromAPI() {
   const data = await safeJsonFetch(`${API_BASE}/api/vendors`);
   vendorsBody.innerHTML = "";
@@ -99,7 +99,7 @@ async function loadVendorsFromAPI() {
   Object.keys(vendors).forEach(name => addVendorRow({ name, url: vendors[name] }));
 }
 
-/* Importación CSV/XLSX y pegado */
+/* Importación */
 const fileInput = document.getElementById("fileInput");
 const parseBtn  = document.getElementById("parseFile");
 const openPaste = document.getElementById("openPaste");
@@ -139,7 +139,7 @@ function readCSVFile(file) {
   reader.readAsText(file, "utf-8");
 }
 function readXLSXFile(file) {
-  if (!window.XLSX) { alert("Para XLSX, incluye SheetJS (xlsx.full.min.js) en index.html"); return; }
+  if (!window.XLSX) { alert("Para XLSX, incluye SheetJS (xlsx.full.min.js)"); return; }
   const reader = new FileReader();
   reader.onload = (e) => {
     const data = new Uint8Array(e.target.result);
@@ -178,10 +178,7 @@ function normalizeRows(rows) {
   const hasHeader = ["producto","marca","modelo","capacidad","ean","ean/código","codigo","código"].some(k => header.includes(k));
   const start = hasHeader ? 1 : 0;
 
-  const idx = (name) => {
-    const pos = rows[0].findIndex(h => (h||"").toString().toLowerCase() === name.toLowerCase());
-    return pos >= 0 ? pos : -1;
-  };
+  const idx = (name) => rows[0].findIndex(h => (h||"").toString().toLowerCase() === name.toLowerCase());
 
   const iProd = hasHeader ? idx("producto")  : 0;
   const iMar  = hasHeader ? idx("marca")     : 1;
@@ -205,12 +202,22 @@ function normalizeRows(rows) {
 }
 function appendProducts(arr){ if (!arr||!arr.length) return; for (const p of arr) addProductRow(p); }
 
-/* Estado, saludo y ejecución */
+/* Estado */
 let resultsStore = [];
 let abortRun = false;
 let currentRunId = null;
 
 function keyOf(r){ return [r["Producto"]||"", r["Marca"]||""].join("||"); }
+
+/* Sanitizador: entero plano sin decimales ni separadores */
+function toPlainInt(v){
+  let s = String(v ?? "");
+  let keep = s.replace(/[^\d.,]/g, "");
+  if (keep.includes(",")) keep = keep.split(",")[0];
+  else keep = keep.replace(/\.\d{1,2}\s*$/, "");
+  const digits = keep.replace(/\D/g, "");
+  return digits;
+}
 
 /* Merge por patch que no pisa ND/vacío */
 function mergeRows(incoming){
@@ -237,7 +244,7 @@ function mergeRows(incoming){
   resultsStore = [...map.values()];
 }
 
-/* Escritura inmediata: crear fila si no existe y actualizar solo la celda del vendedor */
+/* Escritura inmediata */
 function ensureRowAndSetCell(rowObj, vendorName){
   const headMap = headerIndexMap();
   const idx = headMap[vendorName];
@@ -251,7 +258,6 @@ function ensureRowAndSetCell(rowObj, vendorName){
     tr = document.createElement("tr");
     tr.dataset.key = k;
 
-    // construir celdas base + todas las columnas visibles como ND por defecto
     const headers = [...resultsTable.tHead.rows[0].cells].map(x => x.textContent.trim());
     for (const h of headers){
       const td = document.createElement("td");
@@ -265,29 +271,39 @@ function ensureRowAndSetCell(rowObj, vendorName){
     resultsBody.appendChild(tr);
   }
 
-  // preferir número plano si llega la columna "(num)"
+  // preferir número plano si viene “(num)”; si no, sanitizar el formateado
   const numKey = `${vendorName} (num)`;
-  const value = rowObj[numKey] && String(rowObj[numKey]).trim() ? rowObj[numKey] : (rowObj[vendorName] ?? "ND");
+  const raw = rowObj[numKey] && String(rowObj[numKey]).trim() ? rowObj[numKey] : (rowObj[vendorName] ?? "");
+  const value = toPlainInt(raw);
   tr.children[idx].textContent = value && String(value).trim() !== "" ? String(value) : "ND";
 }
 
-/* Log y helpers */
-function logLine(text, cls=""){
-  const ts = new Date().toLocaleTimeString();
-  const div = document.createElement("div");
-  div.className = cls; div.textContent = `[${ts}] ${text}`;
-  runLog.appendChild(div);
-  runLog.scrollTop = runLog.scrollHeight;
+/* Render completo (si immediate == false) */
+function renderFull(){
+  const tbody = resultsBody; tbody.innerHTML = "";
+  for (const r of resultsStore){
+    const td = (k, vendor=false) => {
+      if (vendor){
+        const numKey = `${k} (num)`;
+        const raw = (r[numKey] ?? r[k] ?? "");
+        const val = toPlainInt(raw);
+        return `<td>${val || "ND"}</td>`;
+      }
+      return `<td>${(r[k] ?? "ND") || "ND"}</td>`;
+    };
+    const tr = `
+      <tr data-key="${keyOf(r)}">
+        ${td("Producto")}${td("Marca")}
+        ${td("Carrefour", true)}${td("Cetrogar", true)}${td("CheekSA", true)}
+        ${td("Frávega", true)}${td("Libertad", true)}${td("Masonline", true)}${td("Megatone", true)}
+        ${td("Musimundo", true)}${td("Naldo", true)}${td("Vital", true)}
+        ${td("Marca (Sitio oficial)")}${td("Fecha de Consulta")}
+      </tr>`;
+    tbody.insertAdjacentHTML("beforeend", tr);
+  }
 }
-function setStatus(msg){ statusDiv.textContent = msg; }
-function timeGreeting(nombre = "Alberto"){
-  const h = new Date().getHours();
-  if (h >= 6 && h < 12) return `Buen día ${nombre}`;
-  if (h >= 12 && h < 20) return `Buenas tardes ${nombre}`;
-  return `Buenas noches ${nombre}`;
-}
-function newRunId(){ return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 
+/* Ejecución */
 async function stopSearch(){
   abortRun = true;
   logLine("Solicitud de cancelación enviada…", "warn");
@@ -303,8 +319,8 @@ async function stopSearch(){
     }
   }
 }
+function newRunId(){ return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 
-/* Ejecución incremental por vendedor con modo 'escritura inmediata' */
 async function runSearch(){
   const allProducts = collectProducts();
   const allVendors  = collectVendors();
@@ -323,7 +339,8 @@ async function runSearch(){
   logLine(timeGreeting("Alberto"), "ok");
   logLine(`Lote de ${products.length} producto(s), ${Object.keys(allVendors).length} vendedor(es). run_id=${currentRunId}`, "warn");
 
-  const immediate = document.getElementById("immediate") ? document.getElementById("immediate").value === "true" : true;
+  const immediateSel = document.getElementById("immediate");
+  const immediate = immediateSel ? immediateSel.value === "true" : true;
 
   for (const [name, url] of Object.entries(allVendors)){
     if (abortRun){ logLine("Ejecución detenida por el usuario.", "err"); break; }
@@ -346,27 +363,12 @@ async function runSearch(){
       });
       if (!data.success) throw new Error(data.error || `Falló ${name}`);
 
-      // Escritura inmediata: actualizar solo la celda del vendedor
       if (immediate){
         (data.rows || []).forEach(r => ensureRowAndSetCell(r, name));
       }
 
-      // Merge en memoria (patch) y repintado si immediate == false
       mergeRows(data.rows || []);
-      if (!immediate){
-        const tbody = resultsBody; tbody.innerHTML = "";
-        for (const r of resultsStore){
-          const td = (k) => `<td>${(r[k] ?? "ND") || "ND"}</td>`;
-          const tr = `
-            <tr data-key="${keyOf(r)}">
-              ${td("Producto")}${td("Marca")}${td("Carrefour")}${td("Cetrogar")}${td("CheekSA")}
-              ${td("Frávega")}${td("Libertad")}${td("Masonline")}${td("Megatone")}
-              ${td("Musimundo")}${td("Naldo")}${td("Vital")}${td("Marca (Sitio oficial)")}
-              ${td("Fecha de Consulta")}
-            </tr>`;
-          tbody.insertAdjacentHTML("beforeend", tr);
-        }
-      }
+      if (!immediate) renderFull();
 
       (data.log || []).forEach(line => logLine(line));
       logLine(`OK ${name}`, "ok");
@@ -377,6 +379,22 @@ async function runSearch(){
 
   setStatus(abortRun ? "Cancelado" : "Completado");
   logLine(abortRun ? "Lote cancelado." : "Lote finalizado.", abortRun ? "err" : "ok");
+}
+
+/* Log y helpers */
+function logLine(text, cls=""){
+  const ts = new Date().toLocaleTimeString();
+  const div = document.createElement("div");
+  div.className = cls; div.textContent = `[${ts}] ${text}`;
+  runLog.appendChild(div);
+  runLog.scrollTop = runLog.scrollHeight;
+}
+function setStatus(msg){ statusDiv.textContent = msg; }
+function timeGreeting(nombre = "Alberto"){
+  const h = new Date().getHours();
+  if (h >= 6 && h < 12) return `Buen día ${nombre}`;
+  if (h >= 12 && h < 20) return `Buenas tardes ${nombre}`;
+  return `Buenas noches ${nombre}`;
 }
 
 /* Fetch robusto */
@@ -394,7 +412,7 @@ async function safeJsonFetch(url, options = {}){
   return res.json();
 }
 
-/* Exportar desde resultsStore (incluye columnas (num)) */
+/* Exportar */
 function exportCSV(){
   if (!resultsStore.length){ alert("Sin datos"); return; }
   const headers = Object.keys(resultsStore[0]);
