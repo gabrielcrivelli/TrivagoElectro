@@ -37,3 +37,20 @@ input[type="text"], input[type="number"], select { padding: 6px 8px; border: 1px
 #status { margin-top: 10px; color: #374151; }
 .badge-ok { background: #10b981; color: #fff; padding: 2px 6px; border-radius: 4px; }
 .badge-nd { background: #ef4444; color: #fff; padding: 2px 6px; border-radius: 4px; }
+
+/* Panel de estado en tiempo real */
+.log-box {
+  background: #0b1021;
+  color: #e5e7eb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  border: 1px solid #1f2937;
+  border-radius: 6px;
+  padding: 10px;
+  height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.log-box .ok { color: #10b981; }
+.log-box .warn { color: #f59e0b; }
+.log-box .err { color: #ef4444; }
+.actions { margin: 8px 0 10px; }

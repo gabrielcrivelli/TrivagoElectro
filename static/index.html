@@ -12,8 +12,7 @@
 
   <nav class="tabs">
     <button data-tab="input" class="active">Input</button>
-    <button data-tab="config">Configuración</button>
-    <button data-tab="results">Resultados</button>
+    <button data-tab="search">BUSCAR</button>
     <button data-tab="export">Exportar</button>
   </nav>
 
@@ -60,7 +59,7 @@
       </table>
     </section>
 
-    <section id="config" class="tab">
+    <section id="search" class="tab">
       <h3>Parámetros</h3>
       <div class="grid">
         <label>Headless:
@@ -72,13 +71,17 @@
           <select id="official"><option value="false" selected>No</option><option value="true">Sí</option></select>
         </label>
       </div>
-      <button id="start" class="btn-cta">INICIAR BÚSQUEDA</button>
-      <button id="clearResults">Limpiar resultados</button>
-      <div id="status"></div>
-    </section>
 
-    <section id="results" class="tab">
-      <h3>Tabla de comparación</h3>
+      <div class="actions">
+        <button id="start" class="btn-cta">INICIAR BÚSQUEDA</button>
+        <button id="clearResults">Limpiar resultados</button>
+      </div>
+
+      <h3>Estado en tiempo real</h3>
+      <div id="runLog" class="log-box" aria-live="polite"></div>
+      <div id="status" class="hint" style="margin-top:8px;"></div>
+
+      <h3 style="margin-top:18px;">Tabla de comparación</h3>
       <div class="table-wrap">
         <table id="resultsTable">
           <thead>

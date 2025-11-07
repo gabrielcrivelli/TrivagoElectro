@@ -108,79 +108,100 @@ def get_vendors():
         return jsonify({"vendors": v_from_prompt})
     return jsonify({"vendors": DEFAULT_VENDORS})
 
+@app.route("/api/scrape_vendor", methods=["POST"])
+def scrape_vendor():
+    data = request.get_json(force=True, silent=False)
+    products = sanitize_products(data.get("products", []))
+    v = data.get("vendor") or {}
+    name = to_str(v.get("name"))
+    url  = to_str(v.get("url"))
+    if not products:
+        return jsonify({"success": False, "error": "No se enviaron productos"}), 400
+    if not name:
+        return jsonify({"success": False, "error": "Falta nombre de vendedor"}), 400
+
+    headless = bool(data.get("headless", True))
+    min_delay = int(data.get("min_delay", 2))
+    max_delay = int(data.get("max_delay", 5))
+    include_official = bool(data.get("include_official", False))
+
+    scraper = PriceScraper(headless=headless, delay_range=(min_delay, max_delay))
+    df = scraper.scrape_all_vendors(products, {name: url}, include_official_site=include_official)
+    ordered = [
+        "Producto","Marca","Carrefour","Cetrogar","CheekSA","Frávega","Libertad",
+        "Masonline","Megatone","Musimundo","Naldo","Vital","Marca (Sitio oficial)","Fecha de Consulta"
+    ]
+    for c in ordered:
+        if c not in df.columns:
+            df[c] = "ND"
+    df = df[ordered]
+    return jsonify({"success": True, "rows": df.to_dict(orient="records")})
+
 @app.route("/api/scrape", methods=["POST"])
 def scrape():
-    try:
-        data = request.get_json(force=True, silent=False)
-        if not isinstance(data, dict):
-            return jsonify({"success": False, "error": "Cuerpo JSON inválido"}), 400
+    data = request.get_json(force=True, silent=False)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "Cuerpo JSON inválido"}), 400
 
-        products = sanitize_products(data.get("products", []))
-        vendors = data.get("vendors")
-        if not vendors or not isinstance(vendors, dict) or len(vendors) == 0:
-            vendors = parse_vendors_file(VENDORS_FILE) or parse_vendors_from_prompt(PROMPT_FILE) or DEFAULT_VENDORS
-        if not vendors:
-            return jsonify({"success": False, "error": "No hay vendedores configurados"}), 400
-        if not products:
-            return jsonify({"success": False, "error": "No se enviaron productos"}), 400
+    products = sanitize_products(data.get("products", []))
+    vendors = data.get("vendors")
+    if not vendors or not isinstance(vendors, dict) or len(vendors) == 0:
+        vendors = parse_vendors_file(VENDORS_FILE) or parse_vendors_from_prompt(PROMPT_FILE) or DEFAULT_VENDORS
+    if not vendors:
+        return jsonify({"success": False, "error": "No hay vendedores configurados"}), 400
+    if not products:
+        return jsonify({"success": False, "error": "No se enviaron productos"}), 400
 
-        headless = bool(data.get("headless", True))
-        min_delay = int(data.get("min_delay", 2))
-        max_delay = int(data.get("max_delay", 5))
-        include_official = bool(data.get("include_official", False))
+    headless = bool(data.get("headless", True))
+    min_delay = int(data.get("min_delay", 2))
+    max_delay = int(data.get("max_delay", 5))
+    include_official = bool(data.get("include_official", False))
 
-        scraper = PriceScraper(headless=headless, delay_range=(min_delay, max_delay))
-        df = scraper.scrape_all_vendors(products, vendors, include_official_site=include_official)
-
-        ordered = [
-            "Producto","Marca","Carrefour","Cetrogar","CheekSA","Frávega","Libertad",
-            "Masonline","Megatone","Musimundo","Naldo","Vital","Marca (Sitio oficial)","Fecha de Consulta"
-        ]
-        for c in ordered:
-            if c not in df.columns:
-                df[c] = "ND"
-        df = df[ordered]
-        return jsonify({"success": True, "rows": df.to_dict(orient="records")})
-    except Exception as ex:
-        return jsonify({"success": False, "error": str(ex)}), 400
+    scraper = PriceScraper(headless=headless, delay_range=(min_delay, max_delay))
+    df = scraper.scrape_all_vendors(products, vendors, include_official_site=include_official)
+    ordered = [
+        "Producto","Marca","Carrefour","Cetrogar","CheekSA","Frávega","Libertad",
+        "Masonline","Megatone","Musimundo","Naldo","Vital","Marca (Sitio oficial)","Fecha de Consulta"
+    ]
+    for c in ordered:
+        if c not in df.columns:
+            df[c] = "ND"
+    df = df[ordered]
+    return jsonify({"success": True, "rows": df.to_dict(orient="records")})
 
 @app.route("/api/export/sheets", methods=["POST"])
 def export_sheets():
+    data = request.get_json(force=True, silent=False)
+    rows = data.get("rows", [])
+    sheet_name = data.get("sheet_name", "Comparación Precios Electrodomésticos")
+    creds_path = os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json")
+    creds_b64 = os.getenv("GOOGLE_CREDENTIALS_BASE64", "")
+    if creds_b64 and not os.path.exists(creds_path):
+        import base64
+        with open(creds_path, "wb") as f:
+            f.write(base64.b64decode(creds_b64))
+
+    scope = ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
+    client = gspread.authorize(creds)
+
+    headers = list(rows[0].keys()) if rows else [
+        "Producto","Marca","Carrefour","Cetrogar","CheekSA","Frávega","Libertad",
+        "Masonline","Megatone","Musimundo","Naldo","Vital","Marca (Sitio oficial)","Fecha de Consulta"
+    ]
+    values = [headers] + [[(r.get(h, "") if r.get(h, "") is not None else "") for h in headers] for r in rows]
+
     try:
-        data = request.get_json(force=True, silent=False)
-        rows = data.get("rows", [])
-        sheet_name = data.get("sheet_name", "Comparación Precios Electrodomésticos")
-        creds_path = os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json")
-        creds_b64 = os.getenv("GOOGLE_CREDENTIALS_BASE64", "")
-        if creds_b64 and not os.path.exists(creds_path):
-            import base64
-            with open(creds_path, "wb") as f:
-                f.write(base64.b64decode(creds_b64))
+        sheet = client.open(sheet_name); ws = sheet.sheet1; ws.clear()
+    except Exception:
+        sheet = client.create(sheet_name); ws = sheet.sheet1
 
-        scope = ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
-        client = gspread.authorize(creds)
-
-        headers = list(rows[0].keys()) if rows else [
-            "Producto","Marca","Carrefour","Cetrogar","CheekSA","Frávega","Libertad",
-            "Masonline","Megatone","Musimundo","Naldo","Vital","Marca (Sitio oficial)","Fecha de Consulta"
-        ]
-        values = [headers] + [[(r.get(h, "") if r.get(h, "") is not None else "") for h in headers] for r in rows]
-
-        try:
-            sheet = client.open(sheet_name); ws = sheet.sheet1; ws.clear()
-        except Exception:
-            sheet = client.create(sheet_name); ws = sheet.sheet1
-
-        ws.update("A1", values)
-        try:
-            ws.format("A1:Z1", {"textFormat": {"bold": True}})
-        except Exception:
-            pass
-
-        return jsonify({"success": True, "sheet_url": sheet.url})
-    except Exception as ex:
-        return jsonify({"success": False, "error": str(ex)}), 400
+    ws.update("A1", values)
+    try:
+        ws.format("A1:Z1", {"textFormat": {"bold": True}})
+    except Exception:
+        pass
+    return jsonify({"success": True, "sheet_url": sheet.url})
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))

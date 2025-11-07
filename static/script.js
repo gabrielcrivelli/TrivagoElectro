@@ -19,21 +19,21 @@ tabs.forEach((btn, i) => {
   btn.addEventListener("click", () => activateTab(btn));
   btn.addEventListener("keydown", (e) => {
     const idx = [...tabs].indexOf(btn);
-    if (e.key === "ArrowRight") { e.preventDefault(); const next = tabs[(idx+1)%tabs.length]; next.focus(); activateTab(next); }
-    else if (e.key === "ArrowLeft") { e.preventDefault(); const prev = tabs[(idx-1+tabs.length)%tabs.length]; prev.focus(); activateTab(prev); }
+    if (e.key === "ArrowRight") { e.preventDefault(); const n = tabs[(idx+1)%tabs.length]; n.focus(); activateTab(n); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); const p = tabs[(idx-1+tabs.length)%tabs.length]; p.focus(); activateTab(p); }
     else if (e.key === "Home") { e.preventDefault(); tabs[0].focus(); activateTab(tabs[0]); }
     else if (e.key === "End") { e.preventDefault(); tabs[tabs.length-1].focus(); activateTab(tabs[tabs.length-1]); }
   });
 });
-function activateTab(btn) {
-  tabs.forEach(b => {
+function activateTab(btn){
+  tabs.forEach(b=>{
     b.classList.remove("active"); b.setAttribute("tabindex","-1");
     const p = document.getElementById(b.dataset.tab);
-    if (p) { p.classList.remove("active"); p.hidden = true; }
+    if (p){ p.classList.remove("active"); p.hidden = true; }
   });
   btn.classList.add("active"); btn.setAttribute("tabindex","0");
   const panel = document.getElementById(btn.dataset.tab);
-  if (panel) { panel.classList.add("active"); panel.hidden = false; }
+  if (panel){ panel.classList.add("active"); panel.hidden = false; }
 }
 
 /* UI refs */
@@ -41,6 +41,7 @@ const productsBody = document.querySelector("#productsTable tbody");
 const vendorsBody  = document.querySelector("#vendorsTable tbody");
 const statusDiv    = document.getElementById("status");
 const resultsBody  = document.querySelector("#resultsTable tbody");
+const runLog       = document.getElementById("runLog");
 
 /* CTA */
 const startBtn = document.getElementById("start");
@@ -68,7 +69,7 @@ if (loadSamplesBtn) {
 }
 
 document.getElementById("start").onclick        = runSearch;
-document.getElementById("clearResults").onclick = () => { resultsBody.innerHTML = ""; };
+document.getElementById("clearResults").onclick = () => { resultsBody.innerHTML = ""; resultsStore = []; runLog.textContent = ""; };
 document.getElementById("toCSV").onclick        = exportCSV;
 document.getElementById("copyTable").onclick    = copyTable;
 document.getElementById("toSheets").onclick     = exportToSheets;
@@ -106,7 +107,7 @@ async function loadVendorsFromAPI() {
   Object.keys(vendors).forEach(name => addVendorRow({ name, url: vendors[name] }));
 }
 
-/* Importar CSV/XLSX y pegado */
+/* Importación CSV/XLSX y pegado */
 const fileInput = document.getElementById("fileInput");
 const parseBtn  = document.getElementById("parseFile");
 const openPaste = document.getElementById("openPaste");
@@ -200,28 +201,99 @@ function normalizeRows(rows) {
   for (let r = start; r < rows.length; r++) {
     const row = rows[r] || [];
     const obj = {
-      producto: cleanProduct(row[iProd]),
-      marca: cleanBrand(row[iMar]),
-      modelo: cleanModel(row[iMod]),
-      capacidad: cleanCapacity(row[iCap]),
-      ean: cleanEAN(row[iEAN]),
+      producto: toS(row[iProd]),
+      marca: toS(row[iMar]).toUpperCase(),
+      modelo: toS(row[iMod]).toUpperCase(),
+      capacidad: toS(row[iCap]).toUpperCase().replace(/\s+/g,""),
+      ean: toS(row[iEAN]).replace(/\D/g,""),
     };
     if (Object.values(obj).some(v => (v||"").length)) out.push(obj);
   }
   return out;
 }
-function cleanProduct(v){ return toS(v).replace(/\s+/g," "); }
-function cleanBrand(v){ return toS(v).toUpperCase().replace(/\s+/g," "); }
-function cleanModel(v){ return toS(v).toUpperCase().replace(/\s+/g," "); }
-function cleanCapacity(v){
-  let s = toS(v).toUpperCase().replace(/\s+/g,"");
-  s = s.replace(/KBTU/gi,"BTU").replace(/BTHU/gi,"BTU");
-  return s;
-}
-function cleanEAN(v){ return toS(v).replace(/\D/g,""); }
 function appendProducts(arr){ if (!arr||!arr.length) return; for (const p of arr) addProductRow(p); }
 
-/* Colección y ejecución */
+/* Almacenamiento incremental de resultados */
+let resultsStore = [];
+function keyOf(r){ return [r["Producto"]||"", r["Marca"]||""].join("||"); }
+function mergeRows(incoming){
+  const map = new Map(resultsStore.map(r => [keyOf(r), r]));
+  for (const row of incoming){
+    const k = keyOf(row);
+    if (map.has(k)) Object.assign(map.get(k), row);
+    else map.set(k, row);
+  }
+  resultsStore = [...map.values()];
+  // pintar
+  const tbody = document.querySelector("#resultsTable tbody");
+  tbody.innerHTML = "";
+  for (const r of resultsStore){
+    const td = (k) => `<td>${(r[k] ?? "ND") || "ND"}</td>`;
+    const tr = `
+      <tr>
+        ${td("Producto")}${td("Marca")}${td("Carrefour")}${td("Cetrogar")}${td("CheekSA")}
+        ${td("Frávega")}${td("Libertad")}${td("Masonline")}${td("Megatone")}
+        ${td("Musimundo")}${td("Naldo")}${td("Vital")}${td("Marca (Sitio oficial)")}
+        ${td("Fecha de Consulta")}
+      </tr>`;
+    tbody.insertAdjacentHTML("beforeend", tr);
+  }
+}
+
+/* Log */
+function logLine(text, cls=""){
+  const ts = new Date().toLocaleTimeString();
+  const div = document.createElement("div");
+  div.className = cls; div.textContent = `[${ts}] ${text}`;
+  runLog.appendChild(div);
+  runLog.scrollTop = runLog.scrollHeight;
+}
+function setStatus(msg){ statusDiv.textContent = msg; }
+
+/* Ejecución incremental por vendedor */
+async function runSearch(){
+  const allProducts = collectProducts();
+  const allVendors  = collectVendors();
+  if (!allProducts.length){ alert("Agrega al menos un producto"); return; }
+  const products = allProducts.slice(0, MAX_PER_BATCH);
+  if (allProducts.length > MAX_PER_BATCH){
+    alert(`Se procesarán ${MAX_PER_BATCH} ítems en este lote. Añade el resto en un nuevo lote.`);
+  }
+
+  runLog.textContent = ""; resultsStore = []; resultsBody.innerHTML = "";
+  setStatus("Ejecutando búsqueda...");
+  logLine(`Lote de ${products.length} producto(s), ${Object.keys(allVendors).length} vendedor(es).`, "warn");
+
+  for (const [name, url] of Object.entries(allVendors)){
+    if (!name) continue;
+    logLine(`Iniciando ${name} …`, "warn");
+    try{
+      const payload = {
+        products,
+        vendor: { name, url },
+        headless: document.getElementById("headless").value === "true",
+        min_delay: parseInt(document.getElementById("minDelay").value || "2", 10),
+        max_delay: parseInt(document.getElementById("maxDelay").value || "5", 10),
+        include_official: document.getElementById("official").value === "true"
+      };
+      const data = await safeJsonFetch(`${API_BASE}/api/scrape_vendor`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!data.success) throw new Error(data.error || `Falló ${name}`);
+      mergeRows(data.rows || []);
+      logLine(`OK ${name}`, "ok");
+    }catch(e){
+      logLine(`ERROR ${name}: ${e.message}`, "err");
+    }
+  }
+
+  setStatus("Completado");
+  logLine("Lote finalizado.", "ok");
+}
+
+/* Colección de UI */
 function collectProducts() {
   const rows = [...productsBody.querySelectorAll("tr")];
   return rows.map(r => {
@@ -238,84 +310,40 @@ function collectVendors() {
   });
   return map;
 }
-function setStatus(msg){ statusDiv.textContent = msg; }
-
-async function runSearch() {
-  const allProducts = collectProducts();
-  const vendors  = collectVendors();
-  if (!allProducts.length) { alert("Agrega al menos un producto"); return; }
-  const products = allProducts.slice(0, MAX_PER_BATCH);
-  if (allProducts.length > MAX_PER_BATCH) {
-    alert(`Se procesarán ${MAX_PER_BATCH} ítems en este lote. Añade el resto en un nuevo lote.`);
-  }
-
-  setStatus("Ejecutando búsqueda...");
-  const payload = {
-    products,
-    vendors: Object.keys(vendors).length ? vendors : undefined,
-    headless: document.getElementById("headless").value === "true",
-    min_delay: parseInt(document.getElementById("minDelay").value || "2", 10),
-    max_delay: parseInt(document.getElementById("maxDelay").value || "5", 10),
-    include_official: document.getElementById("official").value === "true"
-  };
-
-  try {
-    const data = await safeJsonFetch(`${API_BASE}/api/scrape`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    if (!data.success) throw new Error(data.error || "La búsqueda falló");
-    renderResults(data.rows || []);
-    setStatus("Completado");
-    document.querySelector('button[data-tab="results"]')?.click();
-  } catch (e) {
-    setStatus("Error durante la búsqueda");
-    alert("Error: " + e.message);
-  }
-}
 
 /* Fetch robusto */
-async function safeJsonFetch(url, options = {}) {
+async function safeJsonFetch(url, options = {}){
   const res = await fetch(url, options);
   const ct = res.headers.get("content-type") || "";
-  if (!res.ok) { const body = await res.text(); throw new Error(`HTTP ${res.status} : ${body.slice(0, 300)}`); }
-  if (!ct.includes("application/json")) { const text = await res.text(); throw new Error(`Respuesta no-JSON desde ${url}: ${text.slice(0, 300)}`); }
+  if (!res.ok){
+    const body = await res.text();
+    throw new Error(`HTTP ${res.status} : ${body.slice(0,300)}`);
+  }
+  if (!ct.includes("application/json")){
+    const text = await res.text();
+    throw new Error(`Respuesta no-JSON desde ${url}: ${text.slice(0,300)}`);
+  }
   return res.json();
 }
 
-/* Render y export */
-function renderResults(rows) {
-  resultsBody.innerHTML = "";
-  for (const r of rows) {
-    const td = (k) => `<td>${(r[k] ?? "ND") || "ND"}</td>`;
-    const tr = `
-      <tr>
-        ${td("Producto")}${td("Marca")}${td("Carrefour")}${td("Cetrogar")}${td("CheekSA")}
-        ${td("Frávega")}${td("Libertad")}${td("Masonline")}${td("Megatone")}
-        ${td("Musimundo")}${td("Naldo")}${td("Vital")}${td("Marca (Sitio oficial)")}
-        ${td("Fecha de Consulta")}
-      </tr>`;
-    resultsBody.insertAdjacentHTML("beforeend", tr);
-  }
-}
-function exportCSV() {
+/* Exportar y utilidades */
+function exportCSV(){
   const table = document.getElementById("resultsTable");
   const rows = [...table.querySelectorAll("tr")].map(tr => [...tr.children].map(td => `"${td.textContent.replaceAll('"','""')}"`).join(","));
   const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "comparacion_precios.csv"; a.click();
 }
-async function exportToSheets() {
+async function exportToSheets(){
   const name = document.getElementById("sheetName").value.trim() || "Comparación Precios Electrodomésticos";
   const rows = []; const table = document.getElementById("resultsTable");
   const headers = [...table.tHead.rows[0].children].map(th => th.textContent.trim());
-  for (const tr of table.tBodies[0].rows) {
-    const obj = {}; [...tr.children].forEach((td,i) => obj[headers[i]] = td.textContent); rows.push(obj);
+  for (const tr of table.tBodies[0].rows){
+    const obj = {}; [...tr.children].forEach((td,i)=> obj[headers[i]] = td.textContent); rows.push(obj);
   }
   await safeJsonFetch(`${API_BASE}/api/export/sheets`, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ rows, sheet_name: name }) });
   alert("Exportado a Google Sheets");
 }
-function copyTable() {
+function copyTable(){
   const sel = window.getSelection(); const range = document.createRange();
   range.selectNode(document.getElementById("resultsTable")); sel.removeAllRanges(); sel.addRange(range);
   document.execCommand("copy"); sel.removeAllRanges(); alert("Tabla copiada al portapapeles");
