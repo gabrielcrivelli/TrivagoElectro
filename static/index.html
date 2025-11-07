@@ -2,14 +2,16 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <title>Comparador de Precios Electrodomésticos</title>
+  <title>Comparador de Precios</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- SheetJS opcional para XLSX -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
   <header>
     <h1>Comparador de Precios</h1>
-    <p>Scraping automatizado de competidores en Argentina</p>
+    <!-- Subtítulo oculto para UI pública -->
   </header>
 
   <nav class="tabs">
@@ -17,15 +19,31 @@
     <button data-tab="config">Configuración</button>
     <button data-tab="results">Resultados</button>
     <button data-tab="export">Exportar</button>
-    <button data-tab="deploy">Deploy</button>
   </nav>
 
   <main>
     <section id="input" class="tab active">
+      <h3>Importar productos</h3>
+      <div class="import-wrap">
+        <input id="fileInput" type="file" accept=".csv,.xlsx" />
+        <button id="parseFile">Subir CSV/XLSX</button>
+        <span class="hint">Máx: 5 ítems por lote</span>
+        <button id="openPaste">Pegar desde tabla</button>
+        <span class="hint">Máx: 5 ítems por lote</span>
+      </div>
+      <div id="pasteBox" class="paste-box" style="display:none;">
+        <p>Pega desde Excel/Sheets con columnas: Producto | Marca | Modelo | Capacidad | EAN</p>
+        <textarea id="pasteArea" rows="8" style="width:100%;"></textarea>
+        <div style="margin-top:8px;">
+          <button id="importPaste">Importar</button>
+          <button id="closePaste" class="secondary">Cerrar</button>
+        </div>
+      </div>
+
       <h3>Productos</h3>
       <div>
         <button id="addProduct">Agregar producto</button>
-        <button id="loadSamples">Cargar ejemplo</button>
+        <button id="loadSamples" class="secondary">Cargar ejemplo</button>
       </div>
       <table id="productsTable">
         <thead>
@@ -42,8 +60,7 @@
       </table>
 
       <h3>Vendedores</h3>
-      <div>
-        <button id="loadVendors">Cargar desde prompt-2.txt</button>
+      <div class="btn-row">
         <button id="addVendor">Agregar vendedor</button>
       </div>
       <table id="vendorsTable">
@@ -72,7 +89,7 @@
           </select>
         </label>
       </div>
-      <button id="start">Iniciar scraping</button>
+      <button id="start" class="btn-cta">INICIAR BÚSQUEDA</button>
       <button id="clearResults">Limpiar resultados</button>
       <div id="status"></div>
     </section>
@@ -115,16 +132,6 @@
         <button id="toSheets">Exportar a Google Sheets</button>
       </div>
       <p>Para habilitar Google Sheets, sube un credentials.json o configura GOOGLE_CREDENTIALS_BASE64 en el servidor.</p>
-    </section>
-
-    <section id="deploy" class="tab">
-      <h3>Guía de Deploy (resumen)</h3>
-      <ol>
-        <li>Render: conecta tu repo, Python 3, build “pip install -r requirements.txt”, start “gunicorn app:app”, y añade variables de entorno si aplica.</li>
-        <li>Railway: crea proyecto desde GitHub, define start “gunicorn app:app …”, configura PORT y genera dominio en Networking.</li>
-        <li>Vercel: sube sólo la carpeta static para frontend y apunta la API a Render/Railway.</li>
-      </ol>
-      <p>Revisa la guía de despliegue en README.md para pasos detallados.</p>
     </section>
   </main>
 
