@@ -15,6 +15,9 @@ PROMPT_FILE = BASE_DIR / "prompt-2.txt"
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="")
 CORS(app)
 
+# Cancelaciones por lote
+CANCEL_FLAGS = {}  # { run_id: True/False }
+
 DEFAULT_VENDORS = {
     "Carrefour": "https://www.carrefour.com.ar",
     "Cetrogar": "https://www.cetrogar.com.ar",
@@ -108,6 +111,15 @@ def get_vendors():
         return jsonify({"vendors": v_from_prompt})
     return jsonify({"vendors": DEFAULT_VENDORS})
 
+@app.route("/api/cancel", methods=["POST"])
+def cancel():
+    data = request.get_json(force=True, silent=False)
+    run_id = to_str(data.get("run_id"))
+    if not run_id:
+        return jsonify({"success": False, "error": "run_id requerido"}), 400
+    CANCEL_FLAGS[run_id] = True
+    return jsonify({"success": True})
+
 @app.route("/api/scrape_vendor", methods=["POST"])
 def scrape_vendor():
     data = request.get_json(force=True, silent=False)
@@ -115,6 +127,7 @@ def scrape_vendor():
     v = data.get("vendor") or {}
     name = to_str(v.get("name"))
     url  = to_str(v.get("url"))
+    run_id = to_str(data.get("run_id"))
     if not products:
         return jsonify({"success": False, "error": "No se enviaron productos"}), 400
     if not name:
@@ -125,8 +138,13 @@ def scrape_vendor():
     max_delay = int(data.get("max_delay", 5))
     include_official = bool(data.get("include_official", False))
 
+    cancel_cb = (lambda: bool(CANCEL_FLAGS.get(run_id))) if run_id else (lambda: False)
+
     scraper = PriceScraper(headless=headless, delay_range=(min_delay, max_delay))
-    df = scraper.scrape_all_vendors(products, {name: url}, include_official_site=include_official)
+    df, logs = scraper.scrape_all_vendors(
+        products, {name: url}, include_official_site=include_official, return_logs=True, cancel_cb=cancel_cb
+    )
+
     ordered = [
         "Producto","Marca","Carrefour","Cetrogar","CheekSA","Frávega","Libertad",
         "Masonline","Megatone","Musimundo","Naldo","Vital","Marca (Sitio oficial)","Fecha de Consulta"
@@ -134,8 +152,10 @@ def scrape_vendor():
     for c in ordered:
         if c not in df.columns:
             df[c] = "ND"
-    df = df[ordered]
-    return jsonify({"success": True, "rows": df.to_dict(orient="records")})
+    # Mantener también columnas numéricas (terminan en " (num)")
+    extra = [c for c in df.columns if c.endswith(" (num)")]
+    df = df[ordered + extra]
+    return jsonify({"success": True, "rows": df.to_dict(orient="records"), "log": logs})
 
 @app.route("/api/scrape", methods=["POST"])
 def scrape():
@@ -145,6 +165,7 @@ def scrape():
 
     products = sanitize_products(data.get("products", []))
     vendors = data.get("vendors")
+    run_id = to_str(data.get("run_id"))
     if not vendors or not isinstance(vendors, dict) or len(vendors) == 0:
         vendors = parse_vendors_file(VENDORS_FILE) or parse_vendors_from_prompt(PROMPT_FILE) or DEFAULT_VENDORS
     if not vendors:
@@ -156,9 +177,10 @@ def scrape():
     min_delay = int(data.get("min_delay", 2))
     max_delay = int(data.get("max_delay", 5))
     include_official = bool(data.get("include_official", False))
+    cancel_cb = (lambda: bool(CANCEL_FLAGS.get(run_id))) if run_id else (lambda: False)
 
     scraper = PriceScraper(headless=headless, delay_range=(min_delay, max_delay))
-    df = scraper.scrape_all_vendors(products, vendors, include_official_site=include_official)
+    df, logs = scraper.scrape_all_vendors(products, vendors, include_official_site=include_official, return_logs=True, cancel_cb=cancel_cb)
     ordered = [
         "Producto","Marca","Carrefour","Cetrogar","CheekSA","Frávega","Libertad",
         "Masonline","Megatone","Musimundo","Naldo","Vital","Marca (Sitio oficial)","Fecha de Consulta"
@@ -166,8 +188,9 @@ def scrape():
     for c in ordered:
         if c not in df.columns:
             df[c] = "ND"
-    df = df[ordered]
-    return jsonify({"success": True, "rows": df.to_dict(orient="records")})
+    extra = [c for c in df.columns if c.endswith(" (num)")]
+    df = df[ordered + extra]
+    return jsonify({"success": True, "rows": df.to_dict(orient="records"), "log": logs})
 
 @app.route("/api/export/sheets", methods=["POST"])
 def export_sheets():

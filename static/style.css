@@ -54,3 +54,12 @@ input[type="text"], input[type="number"], select { padding: 6px 8px; border: 1px
 .log-box .warn { color: #f59e0b; }
 .log-box .err { color: #ef4444; }
 .actions { margin: 8px 0 10px; }
+
+/* ... estilos existentes ... */
+
+.btn-stop { background: #ef4444; color: #fff; border: 1px solid #b91c1c; }
+.btn-stop:hover { background: #dc2626; border-color: #991b1b; }
+.btn-stop:focus-visible { outline: 3px solid #7f1d1d; outline-offset: 2px; }
+
+/* Panel de estado (ya presente) */
+

@@ -1,9 +1,8 @@
 const API_BASE = window.API_BASE || "";
 const MAX_PER_BATCH = 5;
 
-/* Tabs accesibles */
+/* Tabs accesibles (WAI-ARIA) */
 const tabs = document.querySelectorAll(".tabs button");
-const sections = document.querySelectorAll(".tab");
 const tablist = document.querySelector(".tabs");
 if (tablist) tablist.setAttribute("role", "tablist");
 tabs.forEach((btn, i) => {
@@ -36,45 +35,25 @@ function activateTab(btn){
   if (panel){ panel.classList.add("active"); panel.hidden = false; }
 }
 
-/* UI refs */
+/* Refs UI */
 const productsBody = document.querySelector("#productsTable tbody");
 const vendorsBody  = document.querySelector("#vendorsTable tbody");
 const statusDiv    = document.getElementById("status");
 const resultsBody  = document.querySelector("#resultsTable tbody");
 const runLog       = document.getElementById("runLog");
 
-/* CTA */
-const startBtn = document.getElementById("start");
-if (startBtn) {
-  startBtn.textContent = "INICIAR BÚSQUEDA";
-  startBtn.classList.add("btn-cta");
-  startBtn.setAttribute("aria-label", "Iniciar búsqueda");
-}
-
-/* Botones básicos */
+/* Botones y acciones */
 document.getElementById("addProduct").onclick = () => addProductRow();
 const addVendorBtn = document.getElementById("addVendor");
 if (addVendorBtn) addVendorBtn.onclick  = () => addVendorRow({ name: "", url: "" });
-
-const loadSamplesBtn = document.getElementById("loadSamples");
-if (loadSamplesBtn) {
-  loadSamplesBtn.onclick = () => {
-    const samples = [
-      { producto: "Aire acondicionado SPLIT CD HITACHI frío / calor 3200w", marca: "Hitachi", modelo: "SPLIT 3200W", capacidad: "3200W", ean: "" },
-      { producto: "Aire acondicionado split Hisense Frio / Calor 3400W AS12HR4SVRKG", marca: "Hisense", modelo: "AS12HR4SVRKG", capacidad: "3400W", ean: "" }
-    ];
-    productsBody.innerHTML = "";
-    for (const p of samples) addProductRow(p);
-  };
-}
-
 document.getElementById("start").onclick        = runSearch;
+document.getElementById("stop").onclick         = stopSearch;
 document.getElementById("clearResults").onclick = () => { resultsBody.innerHTML = ""; resultsStore = []; runLog.textContent = ""; };
 document.getElementById("toCSV").onclick        = exportCSV;
 document.getElementById("copyTable").onclick    = copyTable;
 document.getElementById("toSheets").onclick     = exportToSheets;
 
-/* Filas dinámicas */
+/* Helpers UI */
 function addProductRow(p = {}) {
   const tr = document.createElement("tr");
   tr.innerHTML = `
@@ -99,7 +78,7 @@ function addVendorRow(v = { name: "", url: "" }) {
   vendorsBody.appendChild(tr);
 }
 
-/* Precarga vendedores */
+/* Precarga vendedores desde backend */
 async function loadVendorsFromAPI() {
   const data = await safeJsonFetch(`${API_BASE}/api/vendors`);
   vendorsBody.innerHTML = "";
@@ -178,7 +157,7 @@ function parseClipboardTable(text) {
   return rows.map(r => r.split("\t").map(c => c.trim()));
 }
 
-/* Normalización */
+/* Normalización y helpers */
 const toS = v => (v == null ? "" : String(v).trim());
 function normalizeRows(rows) {
   if (!rows || !rows.length) return [];
@@ -213,8 +192,11 @@ function normalizeRows(rows) {
 }
 function appendProducts(arr){ if (!arr||!arr.length) return; for (const p of arr) addProductRow(p); }
 
-/* Almacenamiento incremental de resultados */
+/* Estado y resultados */
 let resultsStore = [];
+let abortRun = false;
+let currentRunId = null;
+
 function keyOf(r){ return [r["Producto"]||"", r["Marca"]||""].join("||"); }
 function mergeRows(incoming){
   const map = new Map(resultsStore.map(r => [keyOf(r), r]));
@@ -224,7 +206,6 @@ function mergeRows(incoming){
     else map.set(k, row);
   }
   resultsStore = [...map.values()];
-  // pintar
   const tbody = document.querySelector("#resultsTable tbody");
   tbody.innerHTML = "";
   for (const r of resultsStore){
@@ -250,11 +231,41 @@ function logLine(text, cls=""){
 }
 function setStatus(msg){ statusDiv.textContent = msg; }
 
+/* Saludo contextual por hora local */
+function timeGreeting(nombre = "Alberto"){
+  const h = new Date().getHours(); // 0..23 en hora local [MDN getHours]
+  // rangos simples: 6–11 mañana, 12–19 tarde, 20–5 noche
+  if (h >= 6 && h < 12) return `Buen día ${nombre}`;
+  if (h >= 12 && h < 20) return `Buenas tardes ${nombre}`;
+  return `Buenas noches ${nombre}`;
+} // usa Date.getHours() para decidir el saludo [web:377][web:379]
+
+/* Cancelación */
+function newRunId(){
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+async function stopSearch(){
+  abortRun = true;
+  logLine("Solicitud de cancelación enviada…", "warn");
+  if (currentRunId){
+    try{
+      await safeJsonFetch(`${API_BASE}/api/cancel`, {
+        method:"POST", headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ run_id: currentRunId })
+      });
+      logLine("Cancelación confirmada por el servidor.", "ok");
+    }catch(e){
+      logLine(`Error al cancelar: ${e.message}`, "err");
+    }
+  }
+}
+
 /* Ejecución incremental por vendedor */
 async function runSearch(){
   const allProducts = collectProducts();
   const allVendors  = collectVendors();
   if (!allProducts.length){ alert("Agrega al menos un producto"); return; }
+
   const products = allProducts.slice(0, MAX_PER_BATCH);
   if (allProducts.length > MAX_PER_BATCH){
     alert(`Se procesarán ${MAX_PER_BATCH} ítems en este lote. Añade el resto en un nuevo lote.`);
@@ -262,13 +273,20 @@ async function runSearch(){
 
   runLog.textContent = ""; resultsStore = []; resultsBody.innerHTML = "";
   setStatus("Ejecutando búsqueda...");
-  logLine(`Lote de ${products.length} producto(s), ${Object.keys(allVendors).length} vendedor(es).`, "warn");
+  abortRun = false;
+  currentRunId = newRunId();
+
+  // NUEVO: saludo contextual
+  logLine(timeGreeting("Alberto"), "ok"); // primera línea del lote [web:377][web:379]
+  logLine(`Lote de ${products.length} producto(s), ${Object.keys(allVendors).length} vendedor(es). run_id=${currentRunId}`, "warn");
 
   for (const [name, url] of Object.entries(allVendors)){
+    if (abortRun){ logLine("Ejecución detenida por el usuario.", "err"); break; }
     if (!name) continue;
     logLine(`Iniciando ${name} …`, "warn");
     try{
       const payload = {
+        run_id: currentRunId,
         products,
         vendor: { name, url },
         headless: document.getElementById("headless").value === "true",
@@ -282,6 +300,7 @@ async function runSearch(){
         body: JSON.stringify(payload)
       });
       if (!data.success) throw new Error(data.error || `Falló ${name}`);
+      (data.log || []).forEach(line => logLine(line)); // log exhaustivo por URL/estrategia
       mergeRows(data.rows || []);
       logLine(`OK ${name}`, "ok");
     }catch(e){
@@ -289,8 +308,50 @@ async function runSearch(){
     }
   }
 
-  setStatus("Completado");
-  logLine("Lote finalizado.", "ok");
+  setStatus(abortRun ? "Cancelado" : "Completado");
+  logLine(abortRun ? "Lote cancelado." : "Lote finalizado.", abortRun ? "err" : "ok");
+}
+
+/* Fetch robusto */
+async function safeJsonFetch(url, options = {}){
+  const res = await fetch(url, options);
+  const ct = res.headers.get("content-type") || "";
+  if (!res.ok){
+    const body = await res.text();
+    throw new Error(`HTTP ${res.status} : ${body.slice(0,300)}`);
+  }
+  if (!ct.includes("application/json")){
+    const text = await res.text();
+    throw new Error(`Respuesta no-JSON desde ${url}: ${text.slice(0,300)}`);
+  }
+  return res.json();
+}
+
+/* Exportar desde resultsStore (incluye columnas (num)) */
+function exportCSV(){
+  if (!resultsStore.length){ alert("Sin datos"); return; }
+  const headers = Object.keys(resultsStore[0]);
+  const lines = [];
+  lines.push(headers.map(h => `"${h.replaceAll('"','""')}"`).join(","));
+  for (const r of resultsStore){
+    const row = headers.map(h => `"${String(r[h] ?? "").replaceAll('"','""')}"`).join(",");
+    lines.push(row);
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "comparacion_precios.csv"; a.click();
+}
+async function exportToSheets(){
+  if (!resultsStore.length){ alert("Sin datos"); return; }
+  await safeJsonFetch(`${API_BASE}/api/export/sheets`, { 
+    method:"POST", headers:{ "Content-Type":"application/json" }, 
+    body: JSON.stringify({ rows: resultsStore, sheet_name: (document.getElementById("sheetName")?.value || "Comparación Precios Electrodomésticos") })
+  });
+  alert("Exportado a Google Sheets");
+}
+function copyTable(){
+  const sel = window.getSelection(); const range = document.createRange();
+  range.selectNode(document.getElementById("resultsTable")); sel.removeAllRanges(); sel.addRange(range);
+  document.execCommand("copy"); sel.removeAllRanges(); alert("Tabla copiada al portapapeles");
 }
 
 /* Colección de UI */
@@ -311,43 +372,5 @@ function collectVendors() {
   return map;
 }
 
-/* Fetch robusto */
-async function safeJsonFetch(url, options = {}){
-  const res = await fetch(url, options);
-  const ct = res.headers.get("content-type") || "";
-  if (!res.ok){
-    const body = await res.text();
-    throw new Error(`HTTP ${res.status} : ${body.slice(0,300)}`);
-  }
-  if (!ct.includes("application/json")){
-    const text = await res.text();
-    throw new Error(`Respuesta no-JSON desde ${url}: ${text.slice(0,300)}`);
-  }
-  return res.json();
-}
-
-/* Exportar y utilidades */
-function exportCSV(){
-  const table = document.getElementById("resultsTable");
-  const rows = [...table.querySelectorAll("tr")].map(tr => [...tr.children].map(td => `"${td.textContent.replaceAll('"','""')}"`).join(","));
-  const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8" });
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "comparacion_precios.csv"; a.click();
-}
-async function exportToSheets(){
-  const name = document.getElementById("sheetName").value.trim() || "Comparación Precios Electrodomésticos";
-  const rows = []; const table = document.getElementById("resultsTable");
-  const headers = [...table.tHead.rows[0].children].map(th => th.textContent.trim());
-  for (const tr of table.tBodies[0].rows){
-    const obj = {}; [...tr.children].forEach((td,i)=> obj[headers[i]] = td.textContent); rows.push(obj);
-  }
-  await safeJsonFetch(`${API_BASE}/api/export/sheets`, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ rows, sheet_name: name }) });
-  alert("Exportado a Google Sheets");
-}
-function copyTable(){
-  const sel = window.getSelection(); const range = document.createRange();
-  range.selectNode(document.getElementById("resultsTable")); sel.removeAllRanges(); sel.addRange(range);
-  document.execCommand("copy"); sel.removeAllRanges(); alert("Tabla copiada al portapapeles");
-}
-
-/* Init */
-loadVendorsFromAPI();
+/* Parsers auxiliares */
+function parseCSV_lineAware(text){ return parseCSV(text); } // placeholder si luego se requieree
