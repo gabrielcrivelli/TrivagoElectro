@@ -1,4 +1,7 @@
-import re, time, random, io
+import re
+import io
+import time
+import random
 from typing import Dict, List, Tuple, Optional, Callable
 from datetime import datetime
 
@@ -6,6 +9,9 @@ import requests
 from bs4 import BeautifulSoup
 from pdfminer.high_level import extract_text as pdf_extract_text
 import pandas as pd
+from urllib.parse import urlparse, parse_qs
+
+# ------------------ Utilidades generales ------------------
 
 UA_POOL = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
@@ -13,46 +19,112 @@ UA_POOL = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
 ]
 
+# Selectores típicos de precio en tiendas
 PRICE_CSS = [
-    ".price", ".product-price", ".prices", ".vtex-product-price-1-x-sellingPrice",
-    "[class*='price' i]", "[class*='precio' i]", "span[data-price]"
+    ".price",
+    ".product-price",
+    ".prices",
+    ".vtex-product-price-1-x-sellingPrice",
+    ".woocommerce-Price-amount.amount",
+    "[class*='price' i]",
+    "[class*='precio' i]",
+    "span[data-price]"
 ]
+
+# Patrón monetario simple
 PRICE_PAT = re.compile(r"\$?\s*\d[\d\.\,]*")
 
-def s(x): return "" if x is None else str(x).strip()
+def s(x): 
+    return "" if x is None else str(x).strip()
 
-def clean_price_text(text: str) -> Optional[str]:
-    m = PRICE_PAT.search(text or "")
-    if not m: 
-        return None
-    raw = re.sub(r"[^\d.,]", "", m.group(0))
-    if not raw:
-        return None
-    if "," in raw and "." in raw:
-        raw = raw.replace(".", "").replace(",", ".")
-    elif "," in raw:
-        parts = raw.split(",")
-        raw = raw.replace(",", ".") if len(parts[-1]) <= 2 else raw.replace(",", "")
-    elif "." in raw and len(raw.replace(".", "")) >= 5:
-        raw = raw.replace(".", "")
+# Formatea texto de precio legible, ej: "$ 123.456,78"
+def format_price_display(value_float: float) -> str:
     try:
-        val = float(raw)
-        out = f"$ {val:,.2f}"
+        out = f"$ {value_float:,.2f}"
+        # convertir a formato ES (coma decimal, punto miles)
         return out.replace(",", "_").replace(".", ",").replace("_", ".")
     except Exception:
-        return None
+        return ""
 
-def clean_price_num(text: str) -> Optional[str]:
-    m = PRICE_PAT.search(text or "")
-    if not m: 
+# Convierte texto/valor a número plano sin puntos ni comas y SIN decimales
+def to_plain_int_str_from_text(text: str) -> Optional[str]:
+    """
+    Intenta interpretar el texto como precio con separadores y decimales, 
+    lo convierte a float y devuelve su parte entera como string de dígitos.
+    Si no puede parsear, devuelve solo dígitos del texto.
+    """
+    if not isinstance(text, str):
         return None
-    digits = re.sub(r"[^\d]", "", m.group(0))
-    return digits or None
+    raw = text.strip()
+    if not raw:
+        return None
+    # Normalización para float
+    norm = re.sub(r"[^\d\.,]", "", raw)
+    if not norm:
+        return None
+    try:
+        # casos con coma y punto
+        if "," in norm and "." in norm:
+            # si la última coma está a la derecha del último punto, la coma es decimal y el punto es miles
+            if norm.rfind(",") > norm.rfind("."):
+                norm = norm.replace(".", "").replace(",", ".")
+            else:
+                # asume punto decimal
+                norm = norm.replace(",", "")
+        elif "," in norm and "." not in norm:
+            # si hay coma, puede ser decimal o miles; asume coma decimal si dos dígitos a derecha
+            parts = norm.split(",")
+            if len(parts[-1]) <= 2:
+                norm = norm.replace(",", ".")
+            else:
+                norm = norm.replace(",", "")
+        elif "." in norm and "," not in norm:
+            # si hay muchos puntos, probablemente sean miles
+            if len(norm.replace(".", "")) >= 5:
+                norm = norm.replace(".", "")
+        val = float(norm)
+        ival = int(val)  # omitir decimales
+        return str(ival)
+    except Exception:
+        # fallback: solo dígitos (podría incluir decimales pegados; se omiten por diseño aquí)
+        digits = re.sub(r"[^\d]", "", raw)
+        if not digits:
+            return None
+        return digits
+
+def to_plain_int_str_from_float(value_float: float) -> str:
+    try:
+        return str(int(float(value_float)))
+    except Exception:
+        return ""
+
+# ------------------ Cliente HTTP endurecido (anti-403) ------------------
+
+DEFAULT_HEADERS = {
+    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "accept-language": "es-AR,es;q=0.9,en-US;q=0.8,en;q=0.7",
+    "cache-control": "no-cache",
+    "upgrade-insecure-requests": "1",
+    "sec-fetch-site": "none",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-user": "?1",
+    "sec-fetch-dest": "document",
+    "pragma": "no-cache",
+}
+
+def browser_headers(domain: str) -> dict:
+    ua = random.choice(UA_POOL)
+    h = dict(DEFAULT_HEADERS)
+    h["user-agent"] = ua
+    h["sec-ch-ua"] = '"Chromium";v="120", "Google Chrome";v="120", "Not:A-Brand";v="99"'
+    h["sec-ch-ua-platform"] = '"Windows"'
+    h["sec-ch-ua-mobile"] = "?0"
+    h["referer"] = f"{domain.rstrip('/')}/"
+    return h
 
 class HttpClient:
-    def __init__(self, delay_range: Tuple[int,int]=(2,5), log=None, cancel_cb: Optional[Callable[[], bool]]=None):
+    def __init__(self, delay_range: Tuple[int,int]=(2,5), log: Optional[Callable[[str], None]]=None, cancel_cb: Optional[Callable[[], bool]]=None):
         self.session = requests.Session()
-        self.session.headers.update({"accept": "text/html,application/json"})
         self.delay_range = delay_range
         self.log = log or (lambda *_: None)
         self.cancel_cb = cancel_cb or (lambda: False)
@@ -60,20 +132,25 @@ class HttpClient:
     def get(self, url, params=None, timeout=25):
         if self.cancel_cb():
             raise RuntimeError("cancelled")
-        self.session.headers.update({"user-agent": random.choice(UA_POOL)})
+        base = re.match(r"^https?://[^/]+", url)
+        if base:
+            self.session.headers.clear()
+            self.session.headers.update(browser_headers(base.group(0)))
         self.log(f"GET {url}" + (f" params={params}" if params else ""))
-        r = self.session.get(url, params=params, timeout=timeout)
-        self.log(f"HTTP {r.status_code} {url}")
+        r = self.session.get(url, params=params, timeout=timeout, allow_redirects=True)
+        self.log(f"HTTP {r.status_code} {r.url}")
         time.sleep(random.uniform(*self.delay_range))
         r.raise_for_status()
         return r
 
+# ------------------ Scraper principal ------------------
+
 class PriceScraper:
-    def __init__(self, headless: bool=True, delay_range: Tuple[int,int]=(2,5)):
-        self.client = None
+    def __init__(self, headless: bool = True, delay_range: Tuple[int, int] = (2, 5)):
+        self.client: Optional[HttpClient] = None
         self.delay_range = delay_range
 
-    # --------- VTEX ----------
+    # ---------- VTEX ----------
     def _try_vtex(self, base: str, term: str, log) -> Tuple[Optional[str], Optional[str]]:
         api = f"{base.rstrip('/')}/api/catalog_system/pub/products/search"
         r = self.client.get(api, params={"_from": 0, "_to": 9, "ft": term})
@@ -91,45 +168,88 @@ class PriceScraper:
                 for sel in sellers:
                     offer = sel.get("commertialOffer") or {}
                     price = offer.get("Price")
-                    if price and float(price) > 0:
+                    if price is not None:
+                        ptxt = format_price_display(float(price))
+                        pnum = to_plain_int_str_from_float(float(price))
                         log(f"VTEX: precio={price}")
-                        return f"$ {float(price):,.2f}".replace(",", "_").replace(".", ",").replace("_", "."), re.sub(r"[^\d]", "", str(price))
-        # priceRange
+                        return ptxt, pnum
+        # priceRange como alternativa
         for prod in data:
             pr = (prod.get("priceRange") or {}).get("sellingPrice", {})
             low = pr.get("lowPrice")
-            if low:
+            if low is not None:
+                ptxt = format_price_display(float(low))
+                pnum = to_plain_int_str_from_float(float(low))
                 log(f"VTEX: lowPrice={low}")
-                return f"$ {float(low):,.2f}".replace(",", "_").replace(".", ",").replace("_", "."), re.sub(r"[^\d]", "", str(low))
+                return ptxt, pnum
         return None, None
 
-    # --------- Magento ----------
+    # ---------- Magento ----------
     def _try_magento_html(self, base: str, term: str, log) -> Tuple[Optional[str], Optional[str]]:
         url = f"{base.rstrip('/')}/catalogsearch/result/"
         r = self.client.get(url, params={"q": term})
         soup = BeautifulSoup(r.text, "html.parser")
-        txt = soup.get_text(" ", strip=True)
-        # CSS
+        # Intentar por selectores
         for css in PRICE_CSS:
             el = soup.select_one(css)
             if el:
-                t = el.get_text(" ", strip=True)
-                ptxt = clean_price_text(t)
-                pnum = clean_price_num(t)
-                if ptxt and pnum:
+                txt = el.get_text(" ", strip=True)
+                ptxt = format_price_display(float(to_plain_int_str_from_text(txt) or "0"))
+                pnum = to_plain_int_str_from_text(txt)
+                if pnum:
                     log(f"Magento: {css} -> {ptxt} ({pnum})")
                     return ptxt, pnum
-        # patrón global
-        m = PRICE_PAT.search(txt)
+        # Búsqueda global
+        m = PRICE_PAT.search(soup.get_text(" ", strip=True))
         if m:
-            ptxt = clean_price_text(m.group(0))
-            pnum = clean_price_num(m.group(0))
-            if ptxt and pnum:
+            txt = m.group(0)
+            ptxt = format_price_display(float(to_plain_int_str_from_text(txt) or "0"))
+            pnum = to_plain_int_str_from_text(txt)
+            if pnum:
                 log(f"Magento: patrón global -> {ptxt} ({pnum})")
                 return ptxt, pnum
         return None, None
 
-    # --------- Genérico ----------
+    # ---------- WordPress/WooCommerce ----------
+    def _find_wp_search(self, html: str, base: str) -> Optional[str]:
+        soup = BeautifulSoup(html, "html.parser")
+        form = soup.find("form", attrs={"role": "search"}) or soup.find("form", class_=re.compile("search", re.I))
+        if not form:
+            return None
+        action = form.get("action") or base.rstrip("/") + "/"
+        return action
+
+    def _try_wordpress(self, base: str, term: str, log) -> Tuple[Optional[str], Optional[str]]:
+        # 1) Detectar formulario
+        r = self.client.get(base.rstrip("/") + "/")
+        action = self._find_wp_search(r.text, base) or base.rstrip("/") + "/"
+        # 2) Probar ?s=term y ?s=term&post_type=product
+        for params in ({"s": term}, {"s": term, "post_type": "product"}):
+            try:
+                rr = self.client.get(action, params=params)
+                soup = BeautifulSoup(rr.text, "html.parser")
+                el = soup.select_one(".woocommerce-Price-amount.amount") or soup.select_one("[class*='woocommerce-Price-amount']")
+                if el:
+                    txt = el.get_text(" ", strip=True)
+                    pnum = to_plain_int_str_from_text(txt)
+                    if pnum:
+                        ptxt = format_price_display(float(pnum))
+                        log(f"WordPress/Woo: {action} {params} -> {ptxt} ({pnum})")
+                        return ptxt, pnum
+                # fallback global
+                m = PRICE_PAT.search(soup.get_text(" ", strip=True))
+                if m:
+                    txt = m.group(0)
+                    pnum = to_plain_int_str_from_text(txt)
+                    if pnum:
+                        ptxt = format_price_display(float(pnum))
+                        log(f"WordPress: patrón -> {ptxt} ({pnum})")
+                        return ptxt, pnum
+            except Exception as e:
+                log(f"WordPress error {action} {params}: {e}")
+        return None, None
+
+    # ---------- Genérico ----------
     def _try_generic(self, base: str, term: str, log) -> Tuple[Optional[str], Optional[str]]:
         for path in ["/search", "/buscar", "/busca", "/s", "/busqueda"]:
             url = f"{base.rstrip('/')}{path}"
@@ -139,28 +259,28 @@ class PriceScraper:
                 log(f"Genérico: error {path}: {e}")
                 continue
             soup = BeautifulSoup(r.text, "html.parser")
-            txt = soup.get_text(" ", strip=True)
+            txt_all = soup.get_text(" ", strip=True)
             for css in PRICE_CSS:
                 el = soup.select_one(css)
                 if el:
-                    t = el.get_text(" ", strip=True)
-                    ptxt = clean_price_text(t)
-                    pnum = clean_price_num(t)
-                    if ptxt and pnum:
+                    txt = el.get_text(" ", strip=True)
+                    pnum = to_plain_int_str_from_text(txt)
+                    if pnum:
+                        ptxt = format_price_display(float(pnum))
                         log(f"Genérico: {path} {css} -> {ptxt} ({pnum})")
                         return ptxt, pnum
-            m = PRICE_PAT.search(txt)
+            m = PRICE_PAT.search(txt_all)
             if m:
-                ptxt = clean_price_text(m.group(0))
-                pnum = clean_price_num(m.group(0))
-                if ptxt and pnum:
+                txt = m.group(0)
+                pnum = to_plain_int_str_from_text(txt)
+                if pnum:
+                    ptxt = format_price_display(float(pnum))
                     log(f"Genérico: {path} patrón -> {ptxt} ({pnum})")
                     return ptxt, pnum
         return None, None
 
-    # --------- Folletos (CheekSA/Vital) ----------
+    # ---------- Folletos / PDF ----------
     def _pdf_text_from_url(self, url: str, log) -> str:
-        # descarga parcial y extrae texto con pdfminer
         r = self.client.get(url, timeout=45)
         content = r.content
         bio = io.BytesIO(content)
@@ -172,67 +292,61 @@ class PriceScraper:
             log(f"PDF error {e} {url}")
             return ""
 
+    def _extract_pdf_from_wa(self, url: str) -> Optional[str]:
+        try:
+            q = parse_qs(urlparse(url).query)
+            t = " ".join(q.get("text", []))
+            m = re.search(r"https?://[^\s]+?\.pdf", t)
+            return m.group(0) if m else None
+        except Exception:
+            return None
+
     def _try_brochures(self, base: str, term: str, log) -> Tuple[Optional[str], Optional[str]]:
-        candidates = [base] + [f"{base.rstrip('/')}/{p}" for p in ["ofertas","oferta","folleto","folletos","catalogo","catalogos"]]
+        candidates = [base] + [f"{base.rstrip('/')}/{p}" for p in ["ofertas","oferta","promociones","folleto","folletos","catalogo","catalogos"]]
         links = []
         for u in candidates:
             try:
                 r = self.client.get(u)
                 soup = BeautifulSoup(r.text, "html.parser")
-                # enlaces a PDF y a visores conocidos
+                # anchors
                 for a in soup.find_all("a", href=True):
                     href = a["href"]
-                    if any(k in href.lower() for k in ["folleto","catalogo","oferta","ofertas","promo","promocion"]):
-                        links.append(href if href.startswith("http") else (base.rstrip("/") + "/" + href.lstrip("/")))
-                # visores embebidos
+                    if "wa.me/?" in href:
+                        pdf = self._extract_pdf_from_wa(href)
+                        if pdf:
+                            links.append(pdf)
+                    elif href.lower().endswith(".pdf"):
+                        full = href if href.startswith("http") else (base.rstrip("/") + "/" + href.lstrip("/"))
+                        links.append(full)
+                # iframes (visores)
                 for iframe in soup.find_all("iframe", src=True):
                     src = iframe["src"]
-                    if any(x in src for x in ["publitas", "flipsnack", "issuu", "fliphtml5", "flowpaper"]):
+                    if src.lower().endswith(".pdf"):
                         links.append(src)
             except Exception as e:
                 log(f"Folleto error {u}: {e}")
-        # normalizar lista y dar prioridad a PDF
-        uniq = []
-        for h in links:
-            if h not in uniq:
-                uniq.append(h)
-        pdfs = [h for h in uniq if h.lower().endswith(".pdf")]
-        others = [h for h in uniq if h not in pdfs]
-        # PDFs: buscar término y precio cercano
-        for purl in pdfs[:5]:
+        # Descargar y buscar término
+        for purl in links[:10]:
             txt = self._pdf_text_from_url(purl, log)
             if term.lower() in txt.lower():
-                # precio más cercano
-                prices = PRICE_PAT.findall(txt)
-                best = None
-                for pr in prices:
-                    pnum = clean_price_num(pr)
-                    ptxt = clean_price_text(pr)
-                    if pnum and ptxt:
-                        best = (ptxt, pnum); break
-                if best:
-                    log(f"Folleto PDF hit {purl} -> {best[0]} ({best[1]})")
-                    return best
-        # Visores/otras páginas: buscar patrón
-        for o in others[:5]:
-            try:
-                r = self.client.get(o)
-                text = BeautifulSoup(r.text, "html.parser").get_text(" ", strip=True)
-                if term.lower() in text.lower():
-                    ptxt = clean_price_text(text)
-                    pnum = clean_price_num(text)
-                    if ptxt and pnum:
-                        log(f"Folleto visor hit {o} -> {ptxt} ({pnum})")
+                for pr in PRICE_PAT.findall(txt):
+                    pnum = to_plain_int_str_from_text(pr)
+                    if pnum:
+                        ptxt = format_price_display(float(pnum))
+                        log(f"Folleto PDF hit {purl} -> {ptxt} ({pnum})")
                         return ptxt, pnum
-            except Exception as e:
-                log(f"Folleto visor error {o}: {e}")
         return None, None
 
+    # ---------- Selección de estrategia ----------
     def _detect_platform_order(self, vendor_name: str, domain: str) -> List[str]:
-        # Para CheekSA/Vital, priorizar folletos; luego VTEX/Magento/genérico
-        if vendor_name.lower() in ["cheeksa", "vital"]:
-            return ["brochures", "vtex", "magento", "generic"]
-        return ["vtex", "magento", "generic"]
+        vn = (vendor_name or "").lower()
+        if vn in ["cheeksa", "megatone"]:
+            return ["wordpress", "brochures", "vtex", "magento", "generic"]
+        if vn in ["vital"]:
+            return ["brochures", "wordpress", "vtex", "magento", "generic"]
+        if vn in ["musimundo"]:
+            return ["vtex", "magento", "wordpress", "generic"]
+        return ["vtex", "magento", "wordpress", "generic"]
 
     def _search_vendor_once(self, vendor_name: str, base: str, term: str, log) -> Tuple[Optional[str], Optional[str]]:
         for strategy in self._detect_platform_order(vendor_name, base):
@@ -243,22 +357,24 @@ class PriceScraper:
                 elif strategy == "magento":
                     log(f"[{vendor_name}] estrategia=Magento q={term}")
                     res = self._try_magento_html(base, term, log)
+                elif strategy == "wordpress":
+                    log(f"[{vendor_name}] estrategia=WordPress q={term}")
+                    res = self._try_wordpress(base, term, log)
                 elif strategy == "brochures":
                     log(f"[{vendor_name}] estrategia=Folletos term={term}")
                     res = self._try_brochures(base, term, log)
                 else:
                     log(f"[{vendor_name}] estrategia=Genérico q={term}")
                     res = self._try_generic(base, term, log)
-                if res and (res[0] and res[1]):
+                if res and res[0] and res[1]:
                     return res
             except requests.HTTPError as e:
                 log(f"HTTPError {e}")
-                continue
             except Exception as e:
                 log(f"Error {e}")
-                continue
         return None, None
 
+    # ---------- Variantes de búsqueda ----------
     def _variants(self, p: Dict) -> List[str]:
         marca = s(p.get("marca"))
         modelo = s(p.get("modelo"))
@@ -275,18 +391,19 @@ class PriceScraper:
         for v in vs:
             if v and v not in seen:
                 out.append(v); seen.add(v)
-        return out
+        return out[:8]
 
+    # ---------- Orquestación ----------
     def scrape_all_vendors(self, products: List[Dict], vendors: Dict[str, str], include_official_site: bool = False, return_logs: bool = False, cancel_cb: Optional[Callable[[], bool]] = None):
         logs: List[str] = []
-        def log(msg): 
+        def log(msg: str):
             logs.append(msg)
 
         self.client = HttpClient(delay_range=self.delay_range, log=log, cancel_cb=cancel_cb)
         date_only = datetime.now().strftime("%d/%m/%Y")
 
         rows = []
-        for p in products or []:
+        for p in (products or []):
             base_row = {
                 "Producto": s(p.get("producto")),
                 "Marca": s(p.get("marca")),
@@ -304,8 +421,7 @@ class PriceScraper:
                     if price_txt and price_num:
                         break
                 row[vn] = price_txt or "ND"
-                # registrar num plano en columna separada
-                row[f"{vn} (num)"] = price_num or ""
+                row[f"{vn} (num)"] = price_num or ""  # num plano sin decimales
             rows.append(row)
 
         df = pd.DataFrame(rows)
