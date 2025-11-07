@@ -6,17 +6,14 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
-from webdriver_manager.chrome import ChromeDriverManager
 import pandas as pd
 import logging
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("scraper")
 
-def s(x):  # safe string
+def s(x):
     return "" if x is None else str(x).strip()
 
 class PriceScraper:
@@ -40,8 +37,8 @@ class PriceScraper:
         opts.add_argument("--disable-blink-features=AutomationControlled")
         opts.add_argument(f"user-agent={ua}")
         opts.add_argument("--disable-gpu")
-        service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=opts)
+        # Selenium Manager (Selenium 4.11+): gestiona Chrome for Testing y chromedriver
+        self.driver = webdriver.Chrome(options=opts)  # sin webdriver_manager
         self.driver.implicitly_wait(8)
 
     def _delay(self):

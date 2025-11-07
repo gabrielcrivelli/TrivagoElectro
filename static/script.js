@@ -164,10 +164,8 @@ function parseCSV(text) {
     const out = []; let cur = "", inQ = false;
     for (let i=0; i<line.length; i++) {
       const ch = line[i];
-      if (ch === '"') {
-        if (inQ && line[i+1] === '"') { cur += '"'; i++; }
-        else { inQ = !inQ; }
-      } else if (!inQ && (ch === "," || ch === ";")) { out.push(cur); cur = ""; }
+      if (ch === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else { inQ = !inQ; } }
+      else if (!inQ && (ch === "," || ch === ";")) { out.push(cur); cur = ""; }
       else { cur += ch; }
     }
     out.push(cur);
