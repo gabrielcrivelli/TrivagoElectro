@@ -1,7 +1,8 @@
+/* static/script.js */
 const API_BASE = window.API_BASE || "";
 const MAX_PER_BATCH = 5;
 
-/* Tabs accesibles */
+/* Tabs accesibles (WAI-ARIA) */
 const tabs = document.querySelectorAll(".tabs button");
 const tablist = document.querySelector(".tabs");
 if (tablist) tablist.setAttribute("role", "tablist");
@@ -43,7 +44,7 @@ const resultsTable = document.getElementById("resultsTable");
 const resultsBody  = resultsTable.querySelector("tbody");
 const runLog       = document.getElementById("runLog");
 
-/* Columnas por vendedor (header -> índice) */
+/* Mapear índice de columna por encabezado */
 function headerIndexMap(){
   const map = {};
   const ths = resultsTable.tHead.rows[0].cells;
@@ -98,7 +99,7 @@ async function loadVendorsFromAPI() {
   Object.keys(vendors).forEach(name => addVendorRow({ name, url: vendors[name] }));
 }
 
-/* Importación CSV/XLSX/pegado */
+/* Importación CSV/XLSX y pegado */
 const fileInput = document.getElementById("fileInput");
 const parseBtn  = document.getElementById("parseFile");
 const openPaste = document.getElementById("openPaste");
@@ -211,7 +212,7 @@ let currentRunId = null;
 
 function keyOf(r){ return [r["Producto"]||"", r["Marca"]||""].join("||"); }
 
-/* Merge por patch que no pisa ND */
+/* Merge por patch que no pisa ND/vacío */
 function mergeRows(incoming){
   const map = new Map(resultsStore.map(r => [keyOf(r), r]));
   const isBase = k => k === "Producto" || k === "Marca" || k === "Fecha de Consulta" || k === "Marca (Sitio oficial)";
@@ -243,13 +244,14 @@ function ensureRowAndSetCell(rowObj, vendorName){
   if (idx == null) return;
 
   const k = keyOf(rowObj);
-  let tr = resultsBody.querySelector(`tr[data-key="${CSS && CSS.escape ? CSS.escape(k) : k}"]`);
+  const esc = (v) => (window.CSS && window.CSS.escape ? window.CSS.escape(v) : v);
+  let tr = resultsBody.querySelector(`tr[data-key="${esc(k)}"]`);
 
   if (!tr){
     tr = document.createElement("tr");
     tr.dataset.key = k;
 
-    // construir celdas base + todas las columnas visibles como ND
+    // construir celdas base + todas las columnas visibles como ND por defecto
     const headers = [...resultsTable.tHead.rows[0].cells].map(x => x.textContent.trim());
     for (const h of headers){
       const td = document.createElement("td");
@@ -263,13 +265,13 @@ function ensureRowAndSetCell(rowObj, vendorName){
     resultsBody.appendChild(tr);
   }
 
-  // actualizar solo la celda del vendedor
-  const tds = tr.children;
-  const value = rowObj[vendorName] ?? "ND";
-  tds[idx].textContent = value && String(value).trim() !== "" ? value : "ND";
+  // preferir número plano si llega la columna "(num)"
+  const numKey = `${vendorName} (num)`;
+  const value = rowObj[numKey] && String(rowObj[numKey]).trim() ? rowObj[numKey] : (rowObj[vendorName] ?? "ND");
+  tr.children[idx].textContent = value && String(value).trim() !== "" ? String(value) : "ND";
 }
 
-/* Log y helpers UI */
+/* Log y helpers */
 function logLine(text, cls=""){
   const ts = new Date().toLocaleTimeString();
   const div = document.createElement("div");
@@ -284,8 +286,8 @@ function timeGreeting(nombre = "Alberto"){
   if (h >= 12 && h < 20) return `Buenas tardes ${nombre}`;
   return `Buenas noches ${nombre}`;
 }
-
 function newRunId(){ return Math.random().toString(36).slice(2) + Date.now().toString(36); }
+
 async function stopSearch(){
   abortRun = true;
   logLine("Solicitud de cancelación enviada…", "warn");
@@ -302,7 +304,7 @@ async function stopSearch(){
   }
 }
 
-/* Ejecución incremental por vendedor */
+/* Ejecución incremental por vendedor con modo 'escritura inmediata' */
 async function runSearch(){
   const allProducts = collectProducts();
   const allVendors  = collectVendors();
@@ -321,7 +323,7 @@ async function runSearch(){
   logLine(timeGreeting("Alberto"), "ok");
   logLine(`Lote de ${products.length} producto(s), ${Object.keys(allVendors).length} vendedor(es). run_id=${currentRunId}`, "warn");
 
-  const immediate = document.getElementById("immediate").value === "true";
+  const immediate = document.getElementById("immediate") ? document.getElementById("immediate").value === "true" : true;
 
   for (const [name, url] of Object.entries(allVendors)){
     if (abortRun){ logLine("Ejecución detenida por el usuario.", "err"); break; }
@@ -344,15 +346,14 @@ async function runSearch(){
       });
       if (!data.success) throw new Error(data.error || `Falló ${name}`);
 
-      // Escritura inmediata: actualizar celda del vendedor
+      // Escritura inmediata: actualizar solo la celda del vendedor
       if (immediate){
         (data.rows || []).forEach(r => ensureRowAndSetCell(r, name));
       }
 
-      // Merge en memoria (patch) y repintado (si immediate==false)
+      // Merge en memoria (patch) y repintado si immediate == false
       mergeRows(data.rows || []);
       if (!immediate){
-        // repintado conservando datos
         const tbody = resultsBody; tbody.innerHTML = "";
         for (const r of resultsStore){
           const td = (k) => `<td>${(r[k] ?? "ND") || "ND"}</td>`;
