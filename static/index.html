@@ -4,15 +4,11 @@
   <meta charset="utf-8" />
   <title>Comparador de Precios</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- SheetJS opcional para XLSX -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <header>
-    <h1>Comparador de Precios</h1>
-    <!-- Subtítulo oculto para UI pública -->
-  </header>
+  <header><h1>Comparador de Precios</h1></header>
 
   <nav class="tabs">
     <button data-tab="input" class="active">Input</button>
@@ -32,7 +28,7 @@
         <span class="hint">Máx: 5 ítems por lote</span>
       </div>
       <div id="pasteBox" class="paste-box" style="display:none;">
-        <p>Pega desde Excel/Sheets con columnas: Producto | Marca | Modelo | Capacidad | EAN</p>
+        <p>Pega columnas: Producto | Marca | Modelo | Capacidad | EAN</p>
         <textarea id="pasteArea" rows="8" style="width:100%;"></textarea>
         <div style="margin-top:8px;">
           <button id="importPaste">Importar</button>
@@ -48,12 +44,7 @@
       <table id="productsTable">
         <thead>
           <tr>
-            <th>Producto</th>
-            <th>Marca</th>
-            <th>Modelo</th>
-            <th>Capacidad</th>
-            <th>EAN/Código</th>
-            <th></th>
+            <th>Producto</th><th>Marca</th><th>Modelo</th><th>Capacidad</th><th>EAN/Código</th><th></th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -64,9 +55,7 @@
         <button id="addVendor">Agregar vendedor</button>
       </div>
       <table id="vendorsTable">
-        <thead>
-          <tr><th>Nombre</th><th>URL</th><th></th></tr>
-        </thead>
+        <thead><tr><th>Nombre</th><th>URL</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
     </section>
@@ -75,18 +64,12 @@
       <h3>Parámetros</h3>
       <div class="grid">
         <label>Headless:
-          <select id="headless">
-            <option value="true" selected>Sí</option>
-            <option value="false">No</option>
-          </select>
+          <select id="headless"><option value="true" selected>Sí</option><option value="false">No</option></select>
         </label>
         <label>Delay mínimo (s): <input id="minDelay" type="number" value="2" min="1" max="10" /></label>
         <label>Delay máximo (s): <input id="maxDelay" type="number" value="5" min="1" max="10" /></label>
-        <label>Incluir sitio oficial de marca (marcar ND por ahora):
-          <select id="official">
-            <option value="false" selected>No</option>
-            <option value="true">Sí</option>
-          </select>
+        <label>Incluir sitio oficial:
+          <select id="official"><option value="false" selected>No</option><option value="true">Sí</option></select>
         </label>
       </div>
       <button id="start" class="btn-cta">INICIAR BÚSQUEDA</button>
@@ -100,20 +83,9 @@
         <table id="resultsTable">
           <thead>
             <tr>
-              <th>Producto</th>
-              <th>Marca</th>
-              <th>Carrefour</th>
-              <th>Cetrogar</th>
-              <th>CheekSA</th>
-              <th>Frávega</th>
-              <th>Libertad</th>
-              <th>Masonline</th>
-              <th>Megatone</th>
-              <th>Musimundo</th>
-              <th>Naldo</th>
-              <th>Vital</th>
-              <th>Marca (Sitio oficial)</th>
-              <th>Fecha de Consulta</th>
+              <th>Producto</th><th>Marca</th><th>Carrefour</th><th>Cetrogar</th><th>CheekSA</th><th>Frávega</th>
+              <th>Libertad</th><th>Masonline</th><th>Megatone</th><th>Musimundo</th><th>Naldo</th><th>Vital</th>
+              <th>Marca (Sitio oficial)</th><th>Fecha de Consulta</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -131,10 +103,10 @@
         </label>
         <button id="toSheets">Exportar a Google Sheets</button>
       </div>
-      <p>Para habilitar Google Sheets, sube un credentials.json o configura GOOGLE_CREDENTIALS_BASE64 en el servidor.</p>
+      <p>Para Google Sheets, sube credentials.json o configura GOOGLE_CREDENTIALS_BASE64.</p>
     </section>
   </main>
 
-  <script src="./script.js"></script>
+  <script src="/script.js"></script>
 </body>
 </html>

@@ -16,6 +16,9 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("scraper")
 
+def s(x):  # safe string
+    return "" if x is None else str(x).strip()
+
 class PriceScraper:
     def __init__(self, headless: bool = True, delay_range: Tuple[int, int] = (2, 5)):
         self.headless = headless
@@ -46,11 +49,8 @@ class PriceScraper:
 
     def _search_box(self):
         selectors = [
-            'input[type="search"]',
-            'input[name*="search" i]',
-            'input[name*="buscar" i]',
-            'input[placeholder*="Buscar" i]',
-            '#search-input', '.search-input', '#searchbox'
+            'input[type="search"]','input[name*="search" i]','input[name*="buscar" i]',
+            'input[placeholder*="Buscar" i]','#search-input','.search-input','#searchbox'
         ]
         for css in selectors:
             try:
@@ -63,15 +63,12 @@ class PriceScraper:
 
     def _find_prices(self):
         prices = []
-        selectors = [
-            '.price', '[class*="precio" i]', '[class*="price" i]',
-            '.product-price', '[data-price]', 'span[class*="precio" i]'
-        ]
+        selectors = ['.price','[class*="precio" i]','[class*="price" i]','.product-price','[data-price]','span[class*="precio" i]']
         for css in selectors:
             try:
                 els = self.driver.find_elements(By.CSS_SELECTOR, css)
                 for e in els:
-                    tx = e.text.strip()
+                    tx = s(e.text)
                     if tx and (("$" in tx) or re.search(r"\d{2,}", tx)):
                         prices.append(tx)
                 if prices:
@@ -80,17 +77,14 @@ class PriceScraper:
                 continue
         return prices
 
-    def _clean_price(self, text: str) -> Optional[str]:
-        if not text:
+    def _clean_price(self, text) -> Optional[str]:
+        if not isinstance(text, str):
             return None
         raw = re.sub(r"[^0-9.,]", "", text)
         if not raw:
             return None
         if "," in raw and "." in raw:
-            if raw.rfind(",") > raw.rfind("."):
-                raw = raw.replace(".", "").replace(",", ".")
-            else:
-                raw = raw.replace(",", "")
+            raw = raw.replace(".", "").replace(",", ".") if raw.rfind(",") > raw.rfind(".") else raw.replace(",", "")
         elif "," in raw:
             parts = raw.split(",")
             raw = raw.replace(",", ".") if len(parts[-1]) <= 2 else raw.replace(",", "")
@@ -104,34 +98,28 @@ class PriceScraper:
             return None
 
     def _variants(self, p: Dict) -> List[str]:
-        marca = (p.get("marca") or "").strip()
-        modelo = (p.get("modelo") or "").strip()
-        producto = (p.get("producto") or "").strip()
-        capacidad = (p.get("capacidad") or "").strip()
-        ean = (p.get("ean") or "").strip()
+        marca = s(p.get("marca"))
+        modelo = s(p.get("modelo"))
+        producto = s(p.get("producto"))
+        capacidad = s(p.get("capacidad"))
+        ean = s(p.get("ean"))
         vs = []
-        if marca and modelo:
-            vs.append(f"{marca} {modelo}")
-        if marca and modelo and len(modelo) >= 4:
-            vs.append(f"{marca} {modelo[:4]}")
-        if producto:
-            vs.append(producto)
-        if modelo:
-            vs.append(modelo)
-        if marca and capacidad:
-            vs.append(f"{marca} {capacidad}")
-        if ean:
-            vs.append(ean)
-        uniq = []
-        seen = set()
+        if marca and modelo: vs.append(f"{marca} {modelo}")
+        if marca and modelo and len(modelo) >= 4: vs.append(f"{marca} {modelo[:4]}")
+        if producto: vs.append(producto)
+        if modelo: vs.append(modelo)
+        if marca and capacidad: vs.append(f"{marca} {capacidad}")
+        if ean: vs.append(ean)
+        uniq, seen = [], set()
         for v in vs:
             if v and v not in seen:
-                uniq.append(v)
-                seen.add(v)
+                uniq.append(v); seen.add(v)
         return uniq[:6]
 
     def _search_in_vendor(self, vendor_name: str, vendor_url: str, product: Dict, max_retries: int = 3) -> str:
         variants = self._variants(product)
+        if not s(vendor_url):
+            return "ND"
         for attempt in range(max_retries):
             try:
                 self.driver.get(vendor_url)
@@ -142,24 +130,19 @@ class PriceScraper:
                         return "ND"
                     sb.clear()
                     sb.send_keys(v)
-                    try:
-                        sb.submit()
-                    except Exception:
-                        sb.send_keys("\n")
+                    try: sb.submit()
+                    except Exception: sb.send_keys("\n")
                     self._delay()
                     prices = self._find_prices()
                     for pt in prices:
                         clean = self._clean_price(pt)
-                        if clean:
-                            return clean
+                        if clean: return clean
                 return "ND"
             except TimeoutException:
-                if attempt == max_retries - 1:
-                    return "ND"
+                if attempt == max_retries - 1: return "ND"
                 time.sleep(1)
             except Exception:
-                if attempt == max_retries - 1:
-                    return "ND"
+                if attempt == max_retries - 1: return "ND"
                 time.sleep(1)
         return "ND"
 
@@ -167,24 +150,22 @@ class PriceScraper:
         self._init_driver()
         rows = []
         try:
-            for p in products:
+            for p in products or []:
                 row = {
-                    "Producto": p.get("producto", ""),
-                    "Marca": p.get("marca", ""),
+                    "Producto": s(p.get("producto")),
+                    "Marca": s(p.get("marca")),
                     "Marca (Sitio oficial)": "ND",
                     "Fecha de Consulta": datetime.now().strftime("%d/%m/%Y %H:%M")
                 }
-                for vn, url in vendors.items():
+                for vn, url in (vendors or {}).items():
+                    url = s(url)
                     if not url:
-                        row[vn] = "ND"
-                        continue
+                        row[vn] = "ND"; continue
                     price = self._search_in_vendor(vn, url, p)
                     row[vn] = price or "ND"
                     self._delay()
                 rows.append(row)
         finally:
-            try:
-                self.driver.quit()
-            except Exception:
-                pass
+            try: self.driver.quit()
+            except Exception: pass
         return pd.DataFrame(rows)

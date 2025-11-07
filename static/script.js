@@ -1,15 +1,11 @@
-/* API base (ajusta si backend y frontend van en dominios distintos) */
 const API_BASE = window.API_BASE || "";
-
-/* Límite seguro por lote (ver justificación) */
 const MAX_PER_BATCH = 5;
 
-/* ----------- Tabs accesibles ----------- */
+/* Tabs accesibles */
 const tabs = document.querySelectorAll(".tabs button");
 const sections = document.querySelectorAll(".tab");
 const tablist = document.querySelector(".tabs");
 if (tablist) tablist.setAttribute("role", "tablist");
-
 tabs.forEach((btn, i) => {
   btn.setAttribute("role", "tab");
   btn.setAttribute("tabindex", btn.classList.contains("active") ? "0" : "-1");
@@ -29,7 +25,6 @@ tabs.forEach((btn, i) => {
     else if (e.key === "End") { e.preventDefault(); tabs[tabs.length-1].focus(); activateTab(tabs[tabs.length-1]); }
   });
 });
-
 function activateTab(btn) {
   tabs.forEach(b => {
     b.classList.remove("active"); b.setAttribute("tabindex","-1");
@@ -41,7 +36,7 @@ function activateTab(btn) {
   if (panel) { panel.classList.add("active"); panel.hidden = false; }
 }
 
-/* ----------- UI refs ----------- */
+/* UI refs */
 const productsBody = document.querySelector("#productsTable tbody");
 const vendorsBody  = document.querySelector("#vendorsTable tbody");
 const statusDiv    = document.getElementById("status");
@@ -55,6 +50,7 @@ if (startBtn) {
   startBtn.setAttribute("aria-label", "Iniciar búsqueda");
 }
 
+/* Botones básicos */
 document.getElementById("addProduct").onclick = () => addProductRow();
 const addVendorBtn = document.getElementById("addVendor");
 if (addVendorBtn) addVendorBtn.onclick  = () => addVendorRow({ name: "", url: "" });
@@ -77,7 +73,7 @@ document.getElementById("toCSV").onclick        = exportCSV;
 document.getElementById("copyTable").onclick    = copyTable;
 document.getElementById("toSheets").onclick     = exportToSheets;
 
-/* ----------- Filas dinámicas ----------- */
+/* Filas dinámicas */
 function addProductRow(p = {}) {
   const tr = document.createElement("tr");
   tr.innerHTML = `
@@ -91,7 +87,6 @@ function addProductRow(p = {}) {
   tr.querySelector("button").onclick = () => tr.remove();
   productsBody.appendChild(tr);
 }
-
 function addVendorRow(v = { name: "", url: "" }) {
   const tr = document.createElement("tr");
   tr.innerHTML = `
@@ -103,7 +98,7 @@ function addVendorRow(v = { name: "", url: "" }) {
   vendorsBody.appendChild(tr);
 }
 
-/* ----------- Precarga vendedores ----------- */
+/* Precarga vendedores */
 async function loadVendorsFromAPI() {
   const data = await safeJsonFetch(`${API_BASE}/api/vendors`);
   vendorsBody.innerHTML = "";
@@ -111,7 +106,7 @@ async function loadVendorsFromAPI() {
   Object.keys(vendors).forEach(name => addVendorRow({ name, url: vendors[name] }));
 }
 
-/* ----------- Importar CSV/XLSX y pegado ----------- */
+/* Importar CSV/XLSX y pegado */
 const fileInput = document.getElementById("fileInput");
 const parseBtn  = document.getElementById("parseFile");
 const openPaste = document.getElementById("openPaste");
@@ -128,10 +123,8 @@ if (parseBtn) parseBtn.onclick = () => {
   else if (ext === "xlsx") readXLSXFile(f);
   else alert("Formato no soportado. Usa .csv o .xlsx");
 };
-
 if (openPaste) openPaste.onclick = () => { pasteBox.style.display = "block"; };
 if (closePasteBtn) closePasteBtn.onclick = () => { pasteBox.style.display = "none"; pasteArea.value = ""; };
-
 if (importPasteBtn) importPasteBtn.onclick = () => {
   const text = pasteArea.value || "";
   if (!text.trim()) { alert("Nada para importar"); return; }
@@ -143,7 +136,7 @@ if (importPasteBtn) importPasteBtn.onclick = () => {
 };
 
 function readCSVFile(file) {
-  const reader = new FileReader(); // FileReader API
+  const reader = new FileReader();
   reader.onload = (e) => {
     const text = e.target.result || "";
     const rows = parseCSV(text);
@@ -152,7 +145,6 @@ function readCSVFile(file) {
   };
   reader.readAsText(file, "utf-8");
 }
-
 function readXLSXFile(file) {
   if (!window.XLSX) { alert("Para XLSX, incluye SheetJS (xlsx.full.min.js) en index.html"); return; }
   const reader = new FileReader();
@@ -166,7 +158,6 @@ function readXLSXFile(file) {
   };
   reader.readAsArrayBuffer(file);
 }
-
 function parseCSV(text) {
   const lines = text.replace(/\r/g, "").split("\n").filter(x => x.trim().length);
   return lines.map(line => {
@@ -183,15 +174,13 @@ function parseCSV(text) {
     return out.map(c => c.trim());
   });
 }
-
 function parseClipboardTable(text) {
   const rows = text.replace(/\r/g, "").split("\n").filter(r => r.trim().length);
   return rows.map(r => r.split("\t").map(c => c.trim()));
 }
 
-/* ----------- Normalización ----------- */
+/* Normalización */
 const toS = v => (v == null ? "" : String(v).trim());
-
 function normalizeRows(rows) {
   if (!rows || !rows.length) return [];
   const header = rows[0].map(h => (h||"").toString().toLowerCase());
@@ -223,7 +212,6 @@ function normalizeRows(rows) {
   }
   return out;
 }
-
 function cleanProduct(v){ return toS(v).replace(/\s+/g," "); }
 function cleanBrand(v){ return toS(v).toUpperCase().replace(/\s+/g," "); }
 function cleanModel(v){ return toS(v).toUpperCase().replace(/\s+/g," "); }
@@ -233,11 +221,9 @@ function cleanCapacity(v){
   return s;
 }
 function cleanEAN(v){ return toS(v).replace(/\D/g,""); }
-
-/* Añadir a la tabla de productos */
 function appendProducts(arr){ if (!arr||!arr.length) return; for (const p of arr) addProductRow(p); }
 
-/* ----------- Colección y ejecución ----------- */
+/* Colección y ejecución */
 function collectProducts() {
   const rows = [...productsBody.querySelectorAll("tr")];
   return rows.map(r => {
@@ -260,8 +246,6 @@ async function runSearch() {
   const allProducts = collectProducts();
   const vendors  = collectVendors();
   if (!allProducts.length) { alert("Agrega al menos un producto"); return; }
-
-  // aplicar límite por lote
   const products = allProducts.slice(0, MAX_PER_BATCH);
   if (allProducts.length > MAX_PER_BATCH) {
     alert(`Se procesarán ${MAX_PER_BATCH} ítems en este lote. Añade el resto en un nuevo lote.`);
@@ -293,7 +277,7 @@ async function runSearch() {
   }
 }
 
-/* ----------- Fetch robusto ----------- */
+/* Fetch robusto */
 async function safeJsonFetch(url, options = {}) {
   const res = await fetch(url, options);
   const ct = res.headers.get("content-type") || "";
@@ -302,7 +286,7 @@ async function safeJsonFetch(url, options = {}) {
   return res.json();
 }
 
-/* ----------- Render y export ----------- */
+/* Render y export */
 function renderResults(rows) {
   resultsBody.innerHTML = "";
   for (const r of rows) {
@@ -339,5 +323,5 @@ function copyTable() {
   document.execCommand("copy"); sel.removeAllRanges(); alert("Tabla copiada al portapapeles");
 }
 
-/* ----------- Init ----------- */
+/* Init */
 loadVendorsFromAPI();
